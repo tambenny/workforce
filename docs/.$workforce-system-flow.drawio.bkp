@@ -1,0 +1,67 @@
+<mxfile host="app.diagrams.net" modified="2026-02-19T00:00:00.000Z" agent="Codex" version="24.7.17" editor="www.draw.io">
+  <diagram id="workforce-flow-1" name="Workforce System Flow">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="start" value="Start" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="adminSetup" value="Admin Setup&#10;- Locations (IP + active)&#10;- Positions (EN/CN)&#10;- Staff + role + permissions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="240" y="50" width="270" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="staffLogin" value="User Login" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="580" y="80" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ipCheck" value="IP Check Middleware&#10;Compare login IP vs location allowed IP&#10;Mismatch -&gt; create security warning" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="800" y="45" width="330" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="scheduleCreate" value="Manager with Create Permission&#10;Create Schedule (submitted)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="240" y="240" width="280" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="scheduleApprove" value="Approver (Admin/Manager w approve permission)&#10;Approve or Reject (reason required)&#10;Audit log written" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="580" y="230" width="360" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="clockChoice" value="Clock Method" style="rhombus;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="245" width="160" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="kioskFlow" value="Kiosk Flow&#10;Token auth - PIN identify&#10;Clock In/Out&#10;- one open punch only&#10;- location from kiosk&#10;- audit log" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="170" width="280" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="webFlow" value="Web Clock Flow&#10;- requires active approved schedule&#10;- enforce location IP&#10;- cap clock-out at schedule end&#10;- audit log" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="360" width="280" height="140" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="reports" value="Reports &amp; Monitoring&#10;- Punch list&#10;- Pending approvals&#10;- Security warnings&#10;- Audit logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="760" y="560" width="300" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="end" value="End" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="740" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="start" target="adminSetup"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="adminSetup" target="staffLogin"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="staffLogin" target="ipCheck"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="adminSetup" target="scheduleCreate"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="scheduleCreate" target="scheduleApprove"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="scheduleApprove" target="clockChoice"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" value="Kiosk" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="clockChoice" target="kioskFlow"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e8" value="Web" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="clockChoice" target="webFlow"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="kioskFlow" target="reports"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="webFlow" target="reports"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="ipCheck" target="reports"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;" edge="1" parent="1" source="reports" target="end"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

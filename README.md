@@ -1,59 +1,167 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Workforce
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Workforce is a Laravel 12 employee scheduling and time-clock application. It includes:
 
-## About Laravel
+- staff management
+- locations and kiosks
+- schedule approval flow
+- time punches and summaries
+- a basic kiosk login (`staff_id + pin`)
+- a camera kiosk variant for photo-based verification
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Stack
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- PHP `^8.2`
+- Laravel `^12`
+- MySQL or MariaDB
+- Node/Vite for frontend assets
+- XAMPP is the current local development setup
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Local Setup
 
-## Learning Laravel
+1. Install PHP, Composer, Node.js, and MySQL/XAMPP.
+2. Clone the repo.
+3. Create the environment file:
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+```powershell
+Copy-Item .env.example .env
+```
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+4. Update `.env` for your local machine.
+5. Install PHP dependencies:
 
-## Laravel Sponsors
+```powershell
+composer install
+```
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+6. Generate the app key:
 
-### Premium Partners
+```powershell
+php artisan key:generate
+```
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+7. Run database migrations:
 
-## Contributing
+```powershell
+php artisan migrate
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+8. Create the public storage symlink:
 
-## Code of Conduct
+```powershell
+php artisan storage:link
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+9. Install frontend dependencies and build assets:
 
-## Security Vulnerabilities
+```powershell
+npm install
+npm run build
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Recommended Local `.env`
 
-## License
+See [environment-checklist.md](/c:/xampp/htdocs/workforce/docs/environment-checklist.md).
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+For this project, the important items are usually:
+
+- `APP_URL=https://workforce.local`
+- MySQL connection values
+- `SESSION_DRIVER=database`
+- `CACHE_STORE=database`
+- `QUEUE_CONNECTION=database`
+
+## Local URL
+
+The current local setup uses:
+
+```text
+https://workforce.local
+```
+
+If you are using the camera kiosk, HTTPS matters for webcam access.
+
+## Kiosk Modes
+
+### Basic Kiosk
+
+Original flow using `staff_id + pin`:
+
+```text
+/kiosk
+```
+
+### Camera Kiosk
+
+Photo-based kiosk flow:
+
+```text
+/kiosk-camera
+```
+
+The first kiosk visit needs a valid kiosk token in the URL:
+
+```text
+https://workforce.local/kiosk?token=YOUR_TOKEN
+https://workforce.local/kiosk-camera?token=YOUR_TOKEN
+```
+
+After the token is accepted, the kiosk cookie is set and later visits can work without adding the token every time.
+
+## Photo Storage
+
+Camera punch photos are stored on the `public` disk under:
+
+```text
+storage/app/public/kiosk-punches
+```
+
+Those files are intentionally ignored by git.
+
+## Backups
+
+Local backups are stored under:
+
+```text
+backups/
+```
+
+That folder is ignored by git and should stay local.
+
+## Git / GitHub
+
+The repository is initialized locally and `main` is connected to:
+
+```text
+https://github.com/tambenny/workforce.git
+```
+
+Normal workflow:
+
+```powershell
+git status
+git add .
+git commit -m "Describe the change"
+git push
+```
+
+See [git-workflow.md](/c:/xampp/htdocs/workforce/docs/git-workflow.md) for a slightly safer workflow.
+
+## Files Ignored From Git
+
+The project already ignores:
+
+- `.env`
+- `vendor/`
+- `node_modules/`
+- `backups/`
+- `public/storage`
+- `storage/app/public/kiosk-punches`
+- runtime cache/session/view files
+- SQL dumps
+
+## Notes
+
+- Do not commit production or local `.env` files.
+- Do not commit employee punch photos unless you intentionally want them in source control.
+- For camera kiosk debugging, keep changes small and test after each change. The camera page is sensitive to layout and browser camera behavior.

@@ -108,6 +108,37 @@ https://workforce.local/kiosk-camera?token=YOUR_TOKEN
 
 After the token is accepted, the kiosk cookie is set and later visits can work without adding the token every time.
 
+## Kiosk Quick Start
+
+Use this when you only want to test the kiosk quickly.
+
+1. Start Apache and MySQL in XAMPP.
+2. Make sure migrations and the storage symlink are in place:
+
+```powershell
+php artisan migrate
+php artisan storage:link
+```
+
+3. Open the admin side of the app and generate or rotate the kiosk token for the location.
+4. Open the kiosk with the token the first time:
+
+```text
+https://workforce.local/kiosk?token=YOUR_TOKEN
+https://workforce.local/kiosk-camera?token=YOUR_TOKEN
+```
+
+5. Test the basic kiosk:
+   Enter `staff_id` and `pin`, click `Identify`, then `CLOCK IN` or `CLOCK OUT`.
+6. Test the camera kiosk:
+   Enter `staff_id` and `pin`, click `Identify`, face the webcam, blink once, then complete the punch.
+
+## Kiosk Testing Notes
+
+- If `/kiosk` or `/kiosk-camera` returns `401 Unauthorized`, the token or kiosk cookie is missing.
+- If the camera does not start, use `https://workforce.local` and make sure browser camera permission is allowed.
+- The camera kiosk can store punch photos and show them on the punch photo review page.
+
 ## Photo Storage
 
 Camera punch photos are stored on the `public` disk under:

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\View\View;
 
@@ -18,12 +19,7 @@ class ScheduleController extends Controller
 {
     public function index(Request $request): View
     {
-        $canAccess =
-            in_array($request->user()->role, ['admin', 'manager', 'staff'], true) ||
-            $request->user()->hasSchedulePermission('create') ||
-            $request->user()->hasSchedulePermission('approve');
-
-        abort_unless($canAccess, 403, 'Insufficient role.');
+        abort_unless($request->user()->canViewSchedules(), 403, 'Insufficient role.');
 
         $locations = Location::query()
             ->where('is_active', true)
@@ -33,7 +29,12 @@ class ScheduleController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        $selectedLocationId = (int) $request->query('location_id', ($locations->first()->id ?? 0));
+        $selectedLocationId = (int) $request->query(
+            'location_id',
+            in_array($request->user()->role, ['admin', 'hr'], true)
+                ? 0
+                : $this->defaultAccessibleLocationId($request->user(), $locations)
+        );
         if ($selectedLocationId > 0 && ! $locations->pluck('id')->contains($selectedLocationId)) {
             abort(403, 'You are not allowed to view schedules for this location.');
         }
@@ -75,11 +76,6 @@ class ScheduleController extends Controller
                 l.name as location_name,
                 creator.name as creator_name
             ")
-            ->when($request->user()->role === 'manager', function ($query) use ($request): void {
-                if (! $request->user()->hasSchedulePermission('approve')) {
-                    $query->where('f.created_by', $request->user()->id);
-                }
-            })
             ->when($request->user()->role === 'staff', function ($query) use ($request): void {
                 $query->whereExists(function ($sub) use ($request): void {
                     $sub->select(DB::raw(1))
@@ -89,7 +85,7 @@ class ScheduleController extends Controller
                 });
             })
             ->when(
-                ! in_array($request->user()->role, ['admin', 'manager', 'staff'], true) && $request->user()->hasSchedulePermission('create'),
+                ! in_array($request->user()->role, ['admin', 'hr', 'manager', 'staff'], true) && $request->user()->hasSchedulePermission('create'),
                 fn ($query) => $query->where('f.created_by', $request->user()->id)
             )
             ->groupBy(
@@ -126,14 +122,9 @@ class ScheduleController extends Controller
             ->when($staffName !== '', fn ($query) => $query->where('u.name', 'like', "%{$staffName}%"))
             ->when(! $showHistory, fn ($query) => $query->whereDate('s.shift_date', '>=', $today))
             ->when($selectedLocationId > 0, fn ($query) => $query->where('s.location_id', $selectedLocationId))
-            ->when($request->user()->role === 'manager', function ($query) use ($request): void {
-                if (! $request->user()->hasSchedulePermission('approve')) {
-                    $query->where('s.created_by', $request->user()->id);
-                }
-            })
             ->when($request->user()->role === 'staff', fn ($query) => $query->where('s.user_id', $request->user()->id))
             ->when(
-                ! in_array($request->user()->role, ['admin', 'manager', 'staff'], true) && $request->user()->hasSchedulePermission('create'),
+                ! in_array($request->user()->role, ['admin', 'hr', 'manager', 'staff'], true) && $request->user()->hasSchedulePermission('create'),
                 fn ($query) => $query->where('s.created_by', $request->user()->id)
             )
             ->selectRaw("
@@ -158,6 +149,268 @@ class ScheduleController extends Controller
         return view('schedules.index', compact('pendingForms', 'completedForms', 'showHistory', 'locations', 'selectedLocationId', 'staffName', 'staffSchedules'));
     }
 
+    public function summary(Request $request): View
+    {
+        abort_unless($request->user()->canViewScheduleSummary(), 403, 'Insufficient role.');
+
+        $data = $request->validate([
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+            'location_id' => ['nullable', 'integer'],
+            'staff_name' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $locations = Location::query()
+            ->where('is_active', true)
+            ->when($request->user()->role === 'manager', function ($query) use ($request): void {
+                $query->where('id', $request->user()->location_id);
+            })
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        if ($request->user()->role === 'manager' && $locations->isEmpty()) {
+            abort(403, 'A manager must be assigned to an active location before viewing weekly schedule summaries.');
+        }
+
+        $selectedLocationId = (int) ($data['location_id'] ?? ($request->user()->role === 'manager'
+            ? $this->defaultAccessibleLocationId($request->user(), $locations)
+            : 0));
+        if ($selectedLocationId > 0 && ! $locations->pluck('id')->contains($selectedLocationId)) {
+            abort(403, 'You are not allowed to view that location.');
+        }
+
+        $staffName = trim((string) ($data['staff_name'] ?? ''));
+        $rangeStart = Carbon::parse($data['date_from'] ?? Carbon::today()->startOfWeek()->toDateString())->startOfDay();
+        $rangeEnd = Carbon::parse($data['date_to'] ?? $rangeStart->copy()->endOfWeek()->toDateString())->endOfDay();
+
+        $schedules = Schedule::query()
+            ->with([
+                'user.position:id,name',
+                'location:id,name',
+                'creator:id,name',
+                'approver:id,name',
+                'form:id,location_id,shift_date,created_by,version,status,approved_by,approved_at,created_at',
+                'form.creator:id,name',
+                'form.approver:id,name',
+            ])
+            ->whereDate('shift_date', '>=', $rangeStart->toDateString())
+            ->whereDate('shift_date', '<=', $rangeEnd->toDateString())
+            ->when($selectedLocationId > 0, fn ($query) => $query->where('location_id', $selectedLocationId))
+            ->when($staffName !== '', function ($query) use ($staffName): void {
+                $query->whereHas('user', fn ($staffQuery) => $staffQuery->where('name', 'like', "%{$staffName}%"));
+            })
+            ->where('change_type', '!=', 'removed_after_approval')
+            ->orderBy('shift_date')
+            ->orderBy('starts_at')
+            ->orderBy('user_id')
+            ->get()
+            ->map(function (Schedule $schedule): Schedule {
+                $schedule->setAttribute('duration_seconds', $this->scheduleDurationSeconds($schedule));
+
+                return $schedule;
+            });
+
+        $totals = [
+            'planned_seconds' => $schedules->sum('duration_seconds'),
+            'approved_seconds' => $schedules->where('status', 'approved')->sum('duration_seconds'),
+            'submitted_seconds' => $schedules->where('status', 'submitted')->sum('duration_seconds'),
+            'scheduled_seconds' => $schedules
+                ->whereIn('status', ['approved', 'submitted'])
+                ->sum('duration_seconds'),
+            'rejected_seconds' => $schedules->where('status', 'rejected')->sum('duration_seconds'),
+            'staff_count' => $schedules->pluck('user_id')->unique()->count(),
+            'line_count' => $schedules->count(),
+            'form_count' => $schedules->pluck('schedule_form_id')->filter()->unique()->count(),
+        ];
+
+        $daySpan = (int) $rangeStart->copy()->startOfDay()->diffInDays($rangeEnd->copy()->startOfDay());
+
+        $dailySummaries = collect(range(0, $daySpan))
+            ->map(function (int $offset) use ($rangeStart, $schedules): array {
+                $date = $rangeStart->copy()->addDays($offset);
+                $daySchedules = $schedules
+                    ->filter(fn (Schedule $schedule): bool => $schedule->shift_date->isSameDay($date))
+                    ->values();
+
+                return [
+                    'date' => $date,
+                    'planned_seconds' => $daySchedules->sum('duration_seconds'),
+                    'approved_seconds' => $daySchedules->where('status', 'approved')->sum('duration_seconds'),
+                    'submitted_seconds' => $daySchedules->where('status', 'submitted')->sum('duration_seconds'),
+                    'scheduled_seconds' => $daySchedules
+                        ->whereIn('status', ['approved', 'submitted'])
+                        ->sum('duration_seconds'),
+                    'rejected_seconds' => $daySchedules->where('status', 'rejected')->sum('duration_seconds'),
+                    'line_count' => $daySchedules->count(),
+                    'staff_count' => $daySchedules->pluck('user_id')->unique()->count(),
+                ];
+            });
+
+        $staffSummaries = $schedules
+            ->groupBy('user_id')
+            ->map(function (Collection $rows): array {
+                /** @var \App\Models\Schedule $first */
+                $first = $rows->first();
+
+                return [
+                    'user' => $first->user,
+                    'line_count' => $rows->count(),
+                    'planned_seconds' => $rows->sum('duration_seconds'),
+                    'approved_seconds' => $rows->where('status', 'approved')->sum('duration_seconds'),
+                    'submitted_seconds' => $rows->where('status', 'submitted')->sum('duration_seconds'),
+                    'rejected_seconds' => $rows->where('status', 'rejected')->sum('duration_seconds'),
+                ];
+            })
+            ->sortByDesc('planned_seconds')
+            ->values();
+
+        $formSummaries = $schedules
+            ->groupBy('schedule_form_id')
+            ->map(function (Collection $rows, int|string $formId): array {
+                /** @var \App\Models\Schedule $first */
+                $first = $rows->first();
+                $form = $first->form;
+                $sortedByStart = $rows->sortBy('starts_at')->values();
+                $sortedByEnd = $rows->sortByDesc('ends_at')->values();
+
+                return [
+                    'form_id' => (int) $formId,
+                    'form' => $form,
+                    'shift_date' => $form?->shift_date ?? $first->shift_date,
+                    'location_name' => $first->location?->name ?? '-',
+                    'form_status' => $form?->status ?? $first->status,
+                    'creator_name' => $form?->creator?->name ?? 'System',
+                    'approver_name' => $form?->approver?->name,
+                    'submitted_at' => $form?->created_at ?? $first->created_at,
+                    'lines_count' => $rows->count(),
+                    'planned_seconds' => $rows->sum('duration_seconds'),
+                    'approved_count' => $rows->where('status', 'approved')->count(),
+                    'submitted_count' => $rows->where('status', 'submitted')->count(),
+                    'rejected_count' => $rows->where('status', 'rejected')->count(),
+                    'starts_at_min' => $sortedByStart->first()?->starts_at,
+                    'ends_at_max' => $sortedByEnd->first()?->ends_at,
+                ];
+            })
+            ->sortBy(fn (array $row) => ($row['shift_date']?->format('Ymd') ?? '00000000') . '|' . ($row['starts_at_min']?->format('His') ?? '000000'))
+            ->values();
+
+        $selectedLocation = $selectedLocationId > 0
+            ? $locations->firstWhere('id', $selectedLocationId)
+            : null;
+
+        return view('schedules.summary', [
+            'locations' => $locations,
+            'selectedLocation' => $selectedLocation,
+            'selectedLocationId' => $selectedLocationId,
+            'staffName' => $staffName,
+            'dateFrom' => $rangeStart->toDateString(),
+            'dateTo' => $rangeEnd->toDateString(),
+            'totals' => $totals,
+            'dailySummaries' => $dailySummaries,
+            'staffSummaries' => $staffSummaries,
+            'formSummaries' => $formSummaries,
+            'scheduleRows' => $schedules,
+        ]);
+    }
+
+    public function timeline(Request $request): View
+    {
+        abort_unless($request->user()->canViewScheduleDetails(), 403, 'Insufficient role.');
+
+        $data = $request->validate([
+            'shift_date' => ['nullable', 'date'],
+            'location_id' => ['nullable', 'integer'],
+            'staff_name' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $locations = Location::query()
+            ->where('is_active', true)
+            ->when(in_array($request->user()->role, ['manager', 'staff'], true), function ($query) use ($request): void {
+                $query->where('id', $request->user()->location_id);
+            })
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        if ($request->user()->role === 'manager' && $locations->isEmpty()) {
+            abort(403, 'A manager must be assigned to an active location before viewing schedule timelines.');
+        }
+
+        $selectedDate = Carbon::parse($data['shift_date'] ?? Carbon::today()->toDateString())->toDateString();
+        $selectedLocationId = (int) ($data['location_id'] ?? (in_array($request->user()->role, ['manager', 'staff'], true)
+            ? $this->defaultAccessibleLocationId($request->user(), $locations)
+            : 0));
+
+        if ($selectedLocationId > 0 && ! $locations->pluck('id')->contains($selectedLocationId)) {
+            abort(403, 'You are not allowed to view that location.');
+        }
+
+        $staffName = trim((string) ($data['staff_name'] ?? ''));
+
+        $schedules = Schedule::query()
+            ->with([
+                'user.position:id,name',
+                'location:id,name',
+                'form:id,location_id,shift_date,created_by,version,status',
+            ])
+            ->whereDate('shift_date', $selectedDate)
+            ->when($selectedLocationId > 0, fn ($query) => $query->where('location_id', $selectedLocationId))
+            ->when($staffName !== '', function ($query) use ($staffName): void {
+                $query->whereHas('user', fn ($staffQuery) => $staffQuery->where('name', 'like', "%{$staffName}%"));
+            })
+            ->when($request->user()->role === 'staff', fn ($query) => $query->where('user_id', $request->user()->id))
+            ->where('change_type', '!=', 'removed_after_approval')
+            ->orderBy('starts_at')
+            ->orderBy('user_id')
+            ->get();
+
+        $defaultChartStart = Carbon::parse("{$selectedDate} 06:00:00");
+        $defaultChartEnd = Carbon::parse("{$selectedDate} 22:00:00");
+        $selectedDateEnd = Carbon::parse($selectedDate)->addDay()->startOfDay();
+        $earliestStart = $schedules->map(fn (Schedule $schedule) => $schedule->starts_at->copy())->sort()->first();
+        $latestEnd = $schedules->map(fn (Schedule $schedule) => $schedule->ends_at->copy())->sortDesc()->first();
+
+        $chartStart = $earliestStart?->copy()->startOfHour() ?? $defaultChartStart;
+        $chartEnd = $latestEnd
+            ? (($latestEnd->minute === 0 && $latestEnd->second === 0)
+                ? $latestEnd->copy()
+                : $latestEnd->copy()->addHour()->startOfHour())
+            : $defaultChartEnd;
+        $chartEnd = $chartEnd->gt($selectedDateEnd)
+            ? $selectedDateEnd->copy()
+            : $chartEnd;
+
+        if ($chartEnd->lte($chartStart)) {
+            $chartEnd = $chartStart->copy()->addHour();
+        }
+
+        $totalMinutes = max(60, $chartStart->diffInMinutes($chartEnd));
+        $timelineMarkers = $this->buildScheduleTimelineMarkers($chartStart, $chartEnd, $totalMinutes);
+        $timelineRows = $this->buildScheduleTimelineRows($schedules, $chartStart, $totalMinutes);
+
+        $selectedLocation = $selectedLocationId > 0
+            ? $locations->firstWhere('id', $selectedLocationId)
+            : null;
+
+        return view('schedules.timeline', [
+            'locations' => $locations,
+            'selectedDate' => $selectedDate,
+            'selectedLocation' => $selectedLocation,
+            'selectedLocationId' => $selectedLocationId,
+            'staffName' => $staffName,
+            'timelineRows' => $timelineRows,
+            'timelineMarkers' => $timelineMarkers,
+            'chartStart' => $chartStart,
+            'chartEnd' => $chartEnd,
+            'summary' => [
+                'staff_count' => $timelineRows->count(),
+                'shift_count' => $schedules->count(),
+                'approved_count' => $schedules->where('status', 'approved')->count(),
+                'submitted_count' => $schedules->where('status', 'submitted')->count(),
+                'rejected_count' => $schedules->where('status', 'rejected')->count(),
+            ],
+        ]);
+    }
+
     public function form(Request $request): View
     {
         $data = $request->validate([
@@ -166,22 +419,25 @@ class ScheduleController extends Controller
 
         $form = ScheduleForm::with(['location', 'creator', 'approver'])->findOrFail((int) $data['form_id']);
 
-        if ($request->user()->role === 'manager' && $request->user()->hasSchedulePermission('approve')) {
+        if ($request->user()->role === 'manager') {
             abort_if((int) $form->location_id !== (int) $request->user()->location_id, 403, 'You cannot access this form.');
         }
 
+        abort_unless($request->user()->canViewScheduleDetails(), 403, 'Insufficient role.');
+
         $schedules = $this->formQuery((int) $data['form_id'])
             ->with(['user.position', 'location', 'creator', 'approver', 'rejector'])
-            ->when($request->user()->role === 'manager', function ($query) use ($request): void {
-                if (! $request->user()->hasSchedulePermission('approve')) {
-                    $query->where('created_by', $request->user()->id);
-                }
-            })
             ->when($request->user()->role === 'staff', function ($query) use ($request): void {
                 $query->where('user_id', $request->user()->id);
             })
-            ->orderBy('starts_at')
-            ->get();
+            ->get()
+            ->sortBy([
+                fn (Schedule $schedule) => $schedule->user?->staff_id ?: 'zzzzzz',
+                fn (Schedule $schedule) => $schedule->user?->name ?: '',
+                fn (Schedule $schedule) => $schedule->starts_at?->format('His') ?: '999999',
+                fn (Schedule $schedule) => $schedule->id,
+            ])
+            ->values();
 
         abort_if($schedules->isEmpty(), 404);
 
@@ -211,14 +467,9 @@ class ScheduleController extends Controller
             );
         $addableStaff = collect();
         if (! $isApprovalView && $this->canModifyForm($request->user(), $form)) {
-            $scheduledUserIdsOnDate = Schedule::query()
-                ->whereDate('shift_date', $form->shift_date->toDateString())
-                ->pluck('user_id');
-
             $addableStaff = $this->staffScopeForScheduler($request->user())
                 ->where('is_active', true)
                 ->where('location_id', $form->location_id)
-                ->when($scheduledUserIdsOnDate->isNotEmpty(), fn ($query) => $query->whereNotIn('id', $scheduledUserIdsOnDate))
                 ->orderBy('name')
                 ->get(['id', 'name']);
         }
@@ -241,7 +492,7 @@ class ScheduleController extends Controller
     public function create(Request $request): View
     {
         if ($request->user()->role === 'manager' && ! $request->user()->location_id) {
-            abort(403, 'Manager must be assigned to a location before creating schedules.');
+            abort(403, 'A manager must be assigned to a location before creating schedules.');
         }
 
         $locations = Location::query()
@@ -252,7 +503,7 @@ class ScheduleController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        $selectedLocationId = (int) old('location_id', $request->query('location_id', $locations->first()->id ?? 0));
+        $selectedLocationId = (int) old('location_id', $request->query('location_id', $this->defaultAccessibleLocationId($request->user(), $locations)));
         if ($selectedLocationId > 0 && ! $locations->pluck('id')->contains($selectedLocationId)) {
             abort(403, 'You are not allowed to create schedules for this location.');
         }
@@ -280,6 +531,10 @@ class ScheduleController extends Controller
             'roster.*.selected' => ['nullable', 'boolean'],
             'roster.*.clock_in' => ['nullable', 'date_format:H:i'],
             'roster.*.clock_out' => ['nullable', 'date_format:H:i'],
+            'roster.*.lines' => ['nullable', 'array'],
+            'roster.*.lines.*.selected' => ['nullable', 'boolean'],
+            'roster.*.lines.*.clock_in' => ['nullable', 'date_format:H:i'],
+            'roster.*.lines.*.clock_out' => ['nullable', 'date_format:H:i'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
@@ -288,8 +543,7 @@ class ScheduleController extends Controller
             return back()->withErrors(['roster' => 'You can only create schedules for your own location.'])->withInput();
         }
 
-        $selected = collect($data['roster'])
-            ->filter(fn (array $entry): bool => (bool) ($entry['selected'] ?? false));
+        $selected = $this->selectedRosterEntries($data['roster']);
 
         if ($selected->isEmpty()) {
             return back()->withErrors(['roster' => 'Select at least one roster entry.'])->withInput();
@@ -299,21 +553,15 @@ class ScheduleController extends Controller
             ->with('location')
             ->where('is_active', true)
             ->where('location_id', $locationId)
-            ->whereIn('id', $selected->keys()->map(static fn ($id): int => (int) $id))
+            ->whereIn('id', $selected->pluck('user_id')->unique())
             ->get()
             ->keyBy('id');
 
         $shiftDate = Carbon::parse($data['shift_date'])->toDateString();
-        $form = ScheduleForm::create([
-            'location_id' => $locationId,
-            'shift_date' => $shiftDate,
-            'created_by' => $request->user()->id,
-            'status' => 'submitted',
-        ]);
-        $createdCount = 0;
+        $validatedEntries = [];
 
-        foreach ($selected as $userId => $entry) {
-            $user = $staff->get((int) $userId);
+        foreach ($selected as $entry) {
+            $user = $staff->get((int) $entry['user_id']);
 
             if (! $user) {
                 return back()->withErrors(['roster' => 'One or more selected staff are not allowed for your location scope.'])->withInput();
@@ -333,46 +581,93 @@ class ScheduleController extends Controller
                 return back()->withErrors(['roster' => "Clock in and clock out are required for {$user->name}."])->withInput();
             }
 
-            $startsAt = Carbon::parse("{$shiftDate} {$clockIn}:00");
-            $endsAt = Carbon::parse("{$shiftDate} {$clockOut}:00");
-            if ($endsAt->lessThanOrEqualTo($startsAt)) {
-                return back()->withErrors(['roster' => "Clock out must be after clock in for {$user->name}."])->withInput();
+            $scheduleWindow = $this->buildScheduleWindow($shiftDate, $clockIn, $clockOut);
+            if (! $scheduleWindow) {
+                return back()->withErrors(['roster' => "Clock out cannot match clock in for {$user->name}. Use an earlier clock out time for next-day shifts."])->withInput();
             }
 
-            $schedule = Schedule::create([
-                'schedule_form_id' => $form->id,
-                'reapproval_cycle' => $form->version,
-                'user_id' => $user->id,
-                'location_id' => $user->location_id,
-                'shift_date' => $shiftDate,
+            [$startsAt, $endsAt] = $scheduleWindow;
+
+            $overlappingSchedules = $this->findOverlappingSchedules(
+                $user->id,
+                $startsAt,
+                $endsAt,
+            );
+
+            if ($overlappingSchedules->isNotEmpty()) {
+                return back()
+                    ->withErrors(['roster' => $this->scheduleOverlapErrorMessage($user->name, $overlappingSchedules)])
+                    ->withInput();
+            }
+
+            $overlappingDraftEntries = $this->findOverlappingDraftEntries(
+                collect($validatedEntries),
+                $user->id,
+                $startsAt,
+                $endsAt,
+            );
+
+            if ($overlappingDraftEntries->isNotEmpty()) {
+                return back()
+                    ->withErrors(['roster' => $this->scheduleOverlapErrorMessage($user->name, $overlappingDraftEntries)])
+                    ->withInput();
+            }
+
+            $validatedEntries[] = [
+                'user' => $user,
                 'starts_at' => $startsAt,
                 'ends_at' => $endsAt,
-                'status' => 'submitted',
-                'change_type' => 'original',
-                'notes' => $data['notes'] ?? null,
-                'created_by' => $request->user()->id,
-            ]);
-
-            AuditLog::create([
-                'actor_user_id' => $request->user()->id,
-                'target_user_id' => $user->id,
-                'action' => 'SCHEDULE_SUBMITTED',
-                'entity_type' => Schedule::class,
-                'entity_id' => $schedule->id,
-                'after_data' => $schedule->toArray(),
-                'ip_address' => $request->ip(),
-                'user_agent' => (string) $request->userAgent(),
-            ]);
-
-            $createdCount++;
+            ];
         }
 
-        if ($createdCount === 0) {
-            $form->delete();
+        if (empty($validatedEntries)) {
             return back()->withErrors(['roster' => 'No schedules were created.'])->withInput();
         }
 
-        return redirect()->route('schedules.index')->with('status', "{$createdCount} schedule(s) submitted for approval.");
+        DB::transaction(function () use ($request, $locationId, $shiftDate, $data, $validatedEntries): void {
+            $form = ScheduleForm::create([
+                'location_id' => $locationId,
+                'shift_date' => $shiftDate,
+                'created_by' => $request->user()->id,
+                'status' => 'submitted',
+            ]);
+
+            foreach ($validatedEntries as $entry) {
+                /** @var \App\Models\User $user */
+                $user = $entry['user'];
+                /** @var \Illuminate\Support\Carbon $startsAt */
+                $startsAt = $entry['starts_at'];
+                /** @var \Illuminate\Support\Carbon $endsAt */
+                $endsAt = $entry['ends_at'];
+
+                $schedule = Schedule::create([
+                    'schedule_form_id' => $form->id,
+                    'reapproval_cycle' => $form->version,
+                    'user_id' => $user->id,
+                    'location_id' => $user->location_id,
+                    'shift_date' => $shiftDate,
+                    'starts_at' => $startsAt,
+                    'ends_at' => $endsAt,
+                    'status' => 'submitted',
+                    'change_type' => 'original',
+                    'notes' => $data['notes'] ?? null,
+                    'created_by' => $request->user()->id,
+                ]);
+
+                AuditLog::create([
+                    'actor_user_id' => $request->user()->id,
+                    'target_user_id' => $user->id,
+                    'action' => 'SCHEDULE_SUBMITTED',
+                    'entity_type' => Schedule::class,
+                    'entity_id' => $schedule->id,
+                    'after_data' => $schedule->toArray(),
+                    'ip_address' => $request->ip(),
+                    'user_agent' => (string) $request->userAgent(),
+                ]);
+            }
+        });
+
+        return redirect()->route('schedules.index')->with('status', count($validatedEntries) . ' schedule(s) submitted for approval.');
     }
 
     private function staffScopeForScheduler(User $actor): Builder
@@ -401,7 +696,12 @@ class ScheduleController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        $selectedLocationId = (int) $request->query('location_id', ($locations->first()->id ?? 0));
+        $selectedLocationId = (int) $request->query(
+            'location_id',
+            $request->user()->role === 'manager'
+                ? $this->defaultAccessibleLocationId($request->user(), $locations)
+                : 0
+        );
         if ($selectedLocationId > 0 && ! $locations->pluck('id')->contains($selectedLocationId)) {
             abort(403, 'You are not allowed to view approvals for this location.');
         }
@@ -637,6 +937,8 @@ class ScheduleController extends Controller
 
     public function update(Request $request, Schedule $schedule): RedirectResponse
     {
+        $schedule->loadMissing('user', 'form');
+
         if (! $this->canManageSchedule($request->user(), $schedule)) {
             abort(403, 'You are not allowed to modify this schedule.');
         }
@@ -655,11 +957,24 @@ class ScheduleController extends Controller
         ]);
 
         $shiftDate = $schedule->shift_date->toDateString();
-        $startsAt = Carbon::parse("{$shiftDate} {$data['clock_in']}:00");
-        $endsAt = Carbon::parse("{$shiftDate} {$data['clock_out']}:00");
+        $scheduleWindow = $this->buildScheduleWindow($shiftDate, $data['clock_in'], $data['clock_out']);
+        if (! $scheduleWindow) {
+            return back()->withErrors(['schedule' => 'Clock out cannot match clock in. Use an earlier clock out time for next-day shifts.']);
+        }
 
-        if ($endsAt->lessThanOrEqualTo($startsAt)) {
-            return back()->withErrors(['schedule' => 'Clock out must be after clock in.']);
+        [$startsAt, $endsAt] = $scheduleWindow;
+
+        $overlappingSchedules = $this->findOverlappingSchedules(
+            $schedule->user_id,
+            $startsAt,
+            $endsAt,
+            $schedule->id,
+        );
+
+        if ($overlappingSchedules->isNotEmpty()) {
+            return back()->withErrors([
+                'schedule' => $this->scheduleOverlapErrorMessage($schedule->user?->name ?? 'This staff member', $overlappingSchedules),
+            ]);
         }
 
         $before = $schedule->toArray();
@@ -974,18 +1289,23 @@ class ScheduleController extends Controller
         }
 
         $shiftDate = $form->shift_date->toDateString();
-        $alreadyScheduled = Schedule::query()
-            ->where('user_id', (int) $data['user_id'])
-            ->whereDate('shift_date', $shiftDate)
-            ->exists();
-        if ($alreadyScheduled) {
-            return back()->withErrors(['schedule' => 'Selected staff already has a schedule on this date.']);
+        $scheduleWindow = $this->buildScheduleWindow($shiftDate, $data['clock_in'], $data['clock_out']);
+        if (! $scheduleWindow) {
+            return back()->withErrors(['schedule' => 'Clock out cannot match clock in. Use an earlier clock out time for next-day shifts.']);
         }
 
-        $startsAt = Carbon::parse("{$shiftDate} {$data['clock_in']}:00");
-        $endsAt = Carbon::parse("{$shiftDate} {$data['clock_out']}:00");
-        if ($endsAt->lessThanOrEqualTo($startsAt)) {
-            return back()->withErrors(['schedule' => 'Clock out must be after clock in.']);
+        [$startsAt, $endsAt] = $scheduleWindow;
+
+        $overlappingSchedules = $this->findOverlappingSchedules(
+            $staff->id,
+            $startsAt,
+            $endsAt,
+        );
+
+        if ($overlappingSchedules->isNotEmpty()) {
+            return back()->withErrors([
+                'schedule' => $this->scheduleOverlapErrorMessage($staff->name, $overlappingSchedules),
+            ]);
         }
 
         DB::transaction(function () use ($request, $form, $staff, $shiftDate, $startsAt, $endsAt, $data, $hasPendingModificationUnlock): void {
@@ -1230,5 +1550,235 @@ class ScheduleController extends Controller
         ScheduleForm::query()
             ->where('id', $formId)
             ->update(['status' => $status]);
+    }
+
+    private function defaultAccessibleLocationId(User $user, Collection $locations): int
+    {
+        $preferredLocationId = (int) ($user->location_id ?? 0);
+
+        if ($preferredLocationId > 0 && $locations->pluck('id')->contains($preferredLocationId)) {
+            return $preferredLocationId;
+        }
+
+        return (int) ($locations->first()->id ?? 0);
+    }
+
+    private function buildScheduleTimelineMarkers(Carbon $chartStart, Carbon $chartEnd, int $totalMinutes): Collection
+    {
+        $markers = collect();
+        $cursor = $chartStart->copy();
+
+        while ($cursor->lte($chartEnd)) {
+            $offsetMinutes = $chartStart->diffInMinutes($cursor);
+
+            $markers->push([
+                'label' => $cursor->format('g:i A'),
+                'offset_percent' => min(100, ($offsetMinutes / $totalMinutes) * 100),
+            ]);
+
+            $cursor->addHour();
+        }
+
+        return $markers;
+    }
+
+    private function buildScheduleTimelineRows(Collection $schedules, Carbon $chartStart, int $totalMinutes): Collection
+    {
+        $windowEnd = $chartStart->copy()->addMinutes($totalMinutes);
+
+        return $schedules
+            ->groupBy('user_id')
+            ->map(function (Collection $rows) use ($chartStart, $windowEnd, $totalMinutes): array {
+                $orderedRows = $rows->sortBy('starts_at')->values();
+                /** @var \App\Models\Schedule $first */
+                $first = $orderedRows->first();
+
+                $entries = $orderedRows->map(function (Schedule $schedule) use ($chartStart, $windowEnd, $totalMinutes): array {
+                    $visibleStart = $schedule->starts_at->lt($chartStart)
+                        ? $chartStart->copy()
+                        : $schedule->starts_at->copy();
+                    $visibleEnd = $schedule->ends_at->gt($windowEnd)
+                        ? $windowEnd->copy()
+                        : $schedule->ends_at->copy();
+                    $continuesPastWindow = $schedule->ends_at->gt($windowEnd);
+                    $startOffsetMinutes = max(0, $chartStart->diffInMinutes($visibleStart));
+                    $visibleDurationMinutes = max(1, $visibleStart->diffInMinutes($visibleEnd));
+                    $startPercent = min(100, ($startOffsetMinutes / $totalMinutes) * 100);
+                    $widthPercent = min(max(0, 100 - $startPercent), max(1.5, ($visibleDurationMinutes / $totalMinutes) * 100));
+
+                    return [
+                        'schedule' => $schedule,
+                        'status' => $schedule->status,
+                        'start_label' => $schedule->starts_at->format('g:i A'),
+                        'end_label' => $schedule->ends_at->isSameDay($schedule->starts_at)
+                            ? $schedule->ends_at->format('g:i A')
+                            : $schedule->ends_at->format('M j g:i A'),
+                        'timeline_end_label' => $continuesPastWindow
+                            ? $visibleEnd->format('g:i A') . '+'
+                            : ($schedule->ends_at->isSameDay($schedule->starts_at)
+                                ? $schedule->ends_at->format('g:i A')
+                                : $schedule->ends_at->format('M j g:i A')),
+                        'duration_label' => $this->formatTimelineDuration($schedule->starts_at->diffInMinutes($schedule->ends_at)),
+                        'start_percent' => $startPercent,
+                        'width_percent' => $widthPercent,
+                    ];
+                });
+
+                return [
+                    'user' => $first->user,
+                    'location' => $first->location,
+                    'entries' => $entries,
+                    'color' => $this->buildTimelineRowColor($first->user),
+                    'total_duration_label' => $this->formatTimelineDuration(
+                        $orderedRows->sum(fn (Schedule $schedule): int => $schedule->starts_at->diffInMinutes($schedule->ends_at))
+                    ),
+                    'sort_key' => ($orderedRows->first()?->starts_at?->format('His') ?? '999999') . '|' . ($first->user?->name ?? 'zzzzzz'),
+                ];
+            })
+            ->sortBy('sort_key')
+            ->values();
+    }
+
+    private function formatTimelineDuration(int $minutes): string
+    {
+        $hours = intdiv($minutes, 60);
+        $remainingMinutes = $minutes % 60;
+
+        if ($hours === 0) {
+            return "{$remainingMinutes}m";
+        }
+
+        if ($remainingMinutes === 0) {
+            return "{$hours}h";
+        }
+
+        return "{$hours}h {$remainingMinutes}m";
+    }
+
+    private function buildTimelineRowColor(?User $user): array
+    {
+        $seed = (int) sprintf('%u', crc32(($user?->id ?? 0) . '|' . ($user?->name ?? 'staff')));
+        $hue = $seed % 360;
+
+        return [
+            'bar_background' => "hsl({$hue} 74% 58%)",
+            'bar_border' => "hsl({$hue} 70% 36%)",
+            'soft_background' => "hsl({$hue} 78% 96%)",
+            'soft_border' => "hsl({$hue} 60% 84%)",
+            'accent' => "hsl({$hue} 72% 42%)",
+        ];
+    }
+
+    private function scheduleDurationSeconds(Schedule $schedule): int
+    {
+        return max(0, $schedule->starts_at->diffInSeconds($schedule->ends_at));
+    }
+
+    private function buildScheduleWindow(string $shiftDate, string $clockIn, string $clockOut): ?array
+    {
+        $startsAt = Carbon::parse("{$shiftDate} {$clockIn}:00");
+        $endsAt = Carbon::parse("{$shiftDate} {$clockOut}:00");
+
+        if ($endsAt->equalTo($startsAt)) {
+            return null;
+        }
+
+        if ($endsAt->lt($startsAt)) {
+            $endsAt->addDay();
+        }
+
+        return [$startsAt, $endsAt];
+    }
+
+    private function selectedRosterEntries(array $roster): Collection
+    {
+        return collect($roster)
+            ->flatMap(function (array $entry, string|int $userId): Collection {
+                $userId = (int) $userId;
+                $lines = collect($entry['lines'] ?? []);
+
+                if ($lines->isNotEmpty()) {
+                    return $lines
+                        ->map(function (array $line, int $lineIndex) use ($userId): array {
+                            return [
+                                'user_id' => $userId,
+                                'line_index' => $lineIndex,
+                                'selected' => (bool) ($line['selected'] ?? false),
+                                'clock_in' => $line['clock_in'] ?? null,
+                                'clock_out' => $line['clock_out'] ?? null,
+                            ];
+                        })
+                        ->filter(fn (array $line): bool => $line['selected'])
+                        ->values();
+                }
+
+                return collect([
+                    [
+                        'user_id' => $userId,
+                        'line_index' => 0,
+                        'selected' => (bool) ($entry['selected'] ?? false),
+                        'clock_in' => $entry['clock_in'] ?? null,
+                        'clock_out' => $entry['clock_out'] ?? null,
+                    ],
+                ])->filter(fn (array $line): bool => $line['selected']);
+            })
+            ->values();
+    }
+
+    private function findOverlappingSchedules(
+        int $userId,
+        Carbon $startsAt,
+        Carbon $endsAt,
+        ?int $ignoreScheduleId = null,
+    ): Collection {
+        return Schedule::query()
+            ->where('user_id', $userId)
+            ->where('status', '!=', 'rejected')
+            ->where('change_type', '!=', 'removed_after_approval')
+            ->when($ignoreScheduleId !== null, fn (Builder $query) => $query->where('id', '!=', $ignoreScheduleId))
+            ->where('starts_at', '<', $endsAt)
+            ->where('ends_at', '>', $startsAt)
+            ->orderBy('starts_at')
+            ->get(['id', 'starts_at', 'ends_at']);
+    }
+
+    private function findOverlappingDraftEntries(
+        Collection $validatedEntries,
+        int $userId,
+        Carbon $startsAt,
+        Carbon $endsAt,
+    ): Collection {
+        return $validatedEntries
+            ->filter(function (array $entry) use ($userId, $startsAt, $endsAt): bool {
+                return (int) $entry['user']->id === $userId
+                    && $entry['starts_at']->lt($endsAt)
+                    && $entry['ends_at']->gt($startsAt);
+            })
+            ->values();
+    }
+
+    private function scheduleOverlapErrorMessage(string $staffName, Collection $overlappingSchedules): string
+    {
+        $timeRanges = $overlappingSchedules
+            ->map(function ($entry): string {
+                if ($entry instanceof Schedule) {
+                    return $this->formatScheduleWindow($entry->starts_at, $entry->ends_at);
+                }
+
+                return $this->formatScheduleWindow($entry['starts_at'], $entry['ends_at']);
+            })
+            ->implode(', ');
+
+        return "{$staffName} already has an overlapping schedule in this time window ({$timeRanges}).";
+    }
+
+    private function formatScheduleWindow(Carbon $startsAt, Carbon $endsAt): string
+    {
+        $startLabel = $startsAt->format('M j H:i');
+        $endLabel = $endsAt->isSameDay($startsAt)
+            ? $endsAt->format('H:i')
+            : $endsAt->format('M j H:i');
+
+        return "{$startLabel}-{$endLabel}";
     }
 }

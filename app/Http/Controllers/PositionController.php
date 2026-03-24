@@ -11,9 +11,20 @@ class PositionController extends Controller
 {
     public function index(): View
     {
-        $positions = Position::latest()->paginate(20);
+        $positionQuery = Position::query();
 
-        return view('positions.index', compact('positions'));
+        $positions = (clone $positionQuery)
+            ->withCount('users')
+            ->orderBy('name')
+            ->paginate(20);
+
+        $summary = [
+            'total' => (clone $positionQuery)->count(),
+            'active' => (clone $positionQuery)->where('is_active', true)->count(),
+            'assigned' => (clone $positionQuery)->has('users')->count(),
+        ];
+
+        return view('positions.index', compact('positions', 'summary'));
     }
 
     public function create(): View

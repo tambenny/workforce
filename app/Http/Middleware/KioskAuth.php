@@ -9,6 +9,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class KioskAuth
 {
+    private const CACHE_CONTROL = 'private, no-store, no-cache, must-revalidate, max-age=0';
+
     public function handle(Request $request, Closure $next): Response
     {
         $token = $request->header('X-KIOSK-TOKEN')
@@ -56,10 +58,20 @@ class KioskAuth
                 $targetUrl .= '?' . http_build_query($query);
             }
 
-            return redirect()->to($targetUrl)->withCookie($cookie);
+            return $this->disableCache(
+                redirect()->to($targetUrl)->withCookie($cookie)
+            );
         }
 
-        $response = $next($request);
+        return $this->disableCache($next($request));
+    }
+
+    private function disableCache(Response $response): Response
+    {
+        $response->headers->set('Cache-Control', self::CACHE_CONTROL);
+        $response->headers->set('Pragma', 'no-cache');
+        $response->headers->set('Expires', 'Fri, 01 Jan 1990 00:00:00 GMT');
+        $response->headers->set('Vary', 'Cookie, X-KIOSK-TOKEN');
 
         return $response;
     }

@@ -1,0 +1,17 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-labelledby="gridTitle">
+    <title id="gridTitle">Workforce Clock Grid Logo</title>
+    <defs>
+        <linearGradient id="gridBg" x1="22" y1="18" x2="138" y2="142" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#0b1324"/>
+            <stop offset="1" stop-color="#1e293b"/>
+        </linearGradient>
+    </defs>
+    <rect x="12" y="12" width="136" height="136" rx="30" fill="url(#gridBg)"/>
+    <rect x="30" y="30" width="44" height="44" rx="12" fill="#f97316"/>
+    <rect x="86" y="30" width="44" height="44" rx="12" fill="#38bdf8"/>
+    <rect x="30" y="86" width="44" height="44" rx="12" fill="#22c55e"/>
+    <rect x="86" y="86" width="44" height="44" rx="12" fill="#f8fafc"/>
+    <path d="M98 108V92" stroke="#0f172a" stroke-linecap="round" stroke-width="6"/>
+    <path d="M98 108H110" stroke="#0f172a" stroke-linecap="round" stroke-width="6"/>
+    <path d="M40 112L48 92L58 110L66 100" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
+</svg>

@@ -7,6 +7,12 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
+        $driver = DB::getDriverName();
+
+        if (! in_array($driver, ['mysql', 'mariadb'], true)) {
+            return;
+        }
+
         $tables = [
             'users',
             'locations',

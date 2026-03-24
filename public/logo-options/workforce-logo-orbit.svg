@@ -1,0 +1,21 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-labelledby="orbitTitle">
+    <title id="orbitTitle">Workforce Clock Orbit Logo</title>
+    <defs>
+        <linearGradient id="orbitBg" x1="20" y1="18" x2="140" y2="144" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#0f172a"/>
+            <stop offset="1" stop-color="#1d4ed8"/>
+        </linearGradient>
+        <linearGradient id="orbitRing" x1="50" y1="34" x2="116" y2="110" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#fb7185"/>
+            <stop offset="1" stop-color="#f59e0b"/>
+        </linearGradient>
+    </defs>
+    <rect x="12" y="12" width="136" height="136" rx="34" fill="url(#orbitBg)"/>
+    <circle cx="86" cy="80" r="34" fill="#f8fafc"/>
+    <circle cx="86" cy="80" r="28" stroke="#cbd5e1" stroke-width="4"/>
+    <path d="M86 63V82H101" stroke="#1d4ed8" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+    <circle cx="86" cy="80" r="5" fill="#1d4ed8"/>
+    <path d="M44 108L56 58L71 96L86 70L100 96L116 58L128 108" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+    <ellipse cx="104" cy="54" rx="26" ry="18" transform="rotate(-22 104 54)" stroke="url(#orbitRing)" stroke-width="6"/>
+    <circle cx="126" cy="41" r="6" fill="#fb7185"/>
+</svg>

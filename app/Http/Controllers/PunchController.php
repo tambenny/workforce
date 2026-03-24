@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\View\View;
 
 class PunchController extends Controller
@@ -27,14 +28,20 @@ class PunchController extends Controller
         ]);
 
         $user = $request->user();
-        $isManagerView = in_array($user->role, ['admin', 'manager', 'hr'], true);
+        abort_unless($user->canViewPunchLog(), 403, 'Insufficient role.');
+
+        $isManagerView = $user->role === 'admin'
+            || (in_array($user->role, ['manager', 'hr'], true) && $user->canViewCurrentStaffReport());
+        $canViewCurrentStaff = $user->canViewCurrentStaffReport();
+        $canViewPunchPhotos = $user->canViewPunchPhotos();
+        $canViewPunchSummary = $user->canViewPunchSummary();
         $showExceptions = (bool) ($data['exceptions'] ?? false);
         $showOpenNow = (bool) ($data['open_now'] ?? false);
         $dateFrom = $data['date_from'] ?? null;
         $dateTo = $data['date_to'] ?? null;
         $selectedUserId = (int) ($data['user_id'] ?? 0);
 
-        $query = TimePunch::with(['location', 'kiosk', 'user', 'schedule']);
+        $query = TimePunch::query();
 
         if ($isManagerView) {
             if ($user->role === 'manager') {
@@ -64,76 +71,25 @@ class PunchController extends Controller
             $query->whereDate('clock_in_at', '<=', $dateTo);
         }
 
-        $punches = $query
+        $summaryQuery = clone $query;
+
+        $punches = (clone $query)
+            ->with(['location', 'kiosk', 'user', 'schedule'])
             ->latest('clock_in_at')
             ->paginate(20)
             ->withQueryString();
 
-        $scheduleSummaries = [];
-        $scheduleMessages = [];
-        $userIds = $punches->getCollection()
-            ->pluck('user_id')
-            ->filter()
-            ->unique()
-            ->values();
-        $shiftDates = $punches->getCollection()
-            ->pluck('clock_in_at')
-            ->filter()
-            ->map(fn ($clockInAt) => $clockInAt->toDateString())
-            ->unique()
-            ->values();
+        $summary = [
+            'total' => (clone $summaryQuery)->count(),
+            'exceptions' => (clone $summaryQuery)
+                ->whereNotNull('violation_note')
+                ->where('violation_note', '!=', '')
+                ->count(),
+            'open' => (clone $summaryQuery)->whereNull('clock_out_at')->count(),
+            'staff' => (clone $summaryQuery)->distinct('user_id')->count('user_id'),
+        ];
 
-        if ($userIds->isNotEmpty() && $shiftDates->isNotEmpty()) {
-            $schedulesByKey = Schedule::query()
-                ->whereIn('user_id', $userIds)
-                ->whereIn('shift_date', $shiftDates)
-                ->where('status', '!=', 'rejected')
-                ->where('change_type', '!=', 'removed_after_approval')
-                ->orderBy('starts_at')
-                ->get(['id', 'user_id', 'shift_date', 'starts_at', 'ends_at'])
-                ->groupBy(fn (Schedule $schedule) => $this->scheduleSummaryKey($schedule->user_id, $schedule->shift_date->toDateString()));
-
-            $scheduleSummaries = $schedulesByKey
-                ->map(function ($schedules): string {
-                    return $schedules
-                        ->map(fn (Schedule $schedule) => $schedule->starts_at->timezone(config('app.timezone'))->format('h:i A') . ' - ' . $schedule->ends_at->timezone(config('app.timezone'))->format('h:i A'))
-                        ->implode(', ');
-                })
-                ->all();
-
-            $scheduleMessages = $punches->getCollection()
-                ->mapWithKeys(function (TimePunch $punch) use ($schedulesByKey): array {
-                    $shiftDate = $punch->clock_in_at?->toDateString();
-                    if (! $shiftDate) {
-                        return [$punch->id => null];
-                    }
-
-                    $schedule = $punch->schedule;
-                    if (! $schedule || $schedule->status === 'rejected' || $schedule->change_type === 'removed_after_approval') {
-                        $schedule = $schedulesByKey->get($this->scheduleSummaryKey($punch->user_id, $shiftDate))?->first();
-                    }
-
-                    if (! $schedule) {
-                        return [$punch->id => null];
-                    }
-
-                    $messages = [];
-                    if ($punch->clock_in_at && $punch->clock_in_at->lt($schedule->starts_at)) {
-                        $messages[] = 'Clocked in before schedule';
-                    } elseif ($punch->clock_in_at && $punch->clock_in_at->gt($schedule->ends_at)) {
-                        $messages[] = 'Clocked in after schedule';
-                    }
-
-                    if ($punch->clock_out_at && $punch->clock_out_at->lt($schedule->starts_at)) {
-                        $messages[] = 'Clocked out before schedule';
-                    } elseif ($punch->clock_out_at && $punch->clock_out_at->gt($schedule->ends_at)) {
-                        $messages[] = 'Clocked out after schedule';
-                    }
-
-                    return [$punch->id => $messages ? implode(' | ', $messages) : 'Within scheduled range'];
-                })
-                ->all();
-        }
+        [$scheduleSummaries, $scheduleMessages] = $this->buildPunchScheduleContext($punches->getCollection());
 
         $staffOptions = collect();
         if ($isManagerView) {
@@ -145,7 +101,7 @@ class PunchController extends Controller
                 ->get(['id', 'name', 'staff_id']);
         }
 
-        return view('punches.index', compact('punches', 'isManagerView', 'showExceptions', 'showOpenNow', 'dateFrom', 'dateTo', 'selectedUserId', 'scheduleSummaries', 'scheduleMessages', 'staffOptions'));
+        return view('punches.index', compact('punches', 'isManagerView', 'canViewCurrentStaff', 'canViewPunchPhotos', 'canViewPunchSummary', 'showExceptions', 'showOpenNow', 'dateFrom', 'dateTo', 'selectedUserId', 'scheduleSummaries', 'scheduleMessages', 'staffOptions', 'summary'));
     }
 
     public function forceClockOut(Request $request, TimePunch $punch): RedirectResponse
@@ -155,7 +111,7 @@ class PunchController extends Controller
         ]);
 
         $actor = $request->user();
-        abort_unless(in_array($actor->role, ['admin', 'manager', 'hr'], true), 403, 'Insufficient role.');
+        abort_unless($actor->canViewCurrentStaffReport(), 403, 'Insufficient role.');
 
         if ($actor->role === 'manager' && (int) $punch->location_id !== (int) $actor->location_id) {
             abort(403, 'You cannot manage punches outside your location.');
@@ -204,7 +160,10 @@ class PunchController extends Controller
         ]);
 
         $user = $request->user();
-        $isManagerView = in_array($user->role, ['admin', 'manager', 'hr'], true);
+        abort_unless($user->canViewPunchSummary(), 403, 'Insufficient role.');
+
+        $isManagerView = $user->role === 'admin'
+            || (in_array($user->role, ['manager', 'hr'], true) && $user->canViewCurrentStaffReport());
 
         $dateFrom = $data['date_from'] ?? Carbon::now()->startOfMonth()->toDateString();
         $dateTo = $data['date_to'] ?? Carbon::now()->toDateString();
@@ -299,6 +258,94 @@ class PunchController extends Controller
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
             'isManagerView' => $isManagerView,
+            'canViewPunchLog' => $user->canViewPunchLog(),
+        ]);
+    }
+
+    public function current(Request $request): View
+    {
+        $data = $request->validate([
+            'location_id' => ['nullable', 'integer'],
+        ]);
+
+        $user = $request->user();
+        abort_unless($user->canViewCurrentStaffReport(), 403, 'Insufficient role.');
+
+        $locations = Location::query()
+            ->where('is_active', true)
+            ->when($user->role === 'manager', fn ($query) => $query->where('id', $user->location_id))
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        $selectedLocationId = (int) ($data['location_id'] ?? 0);
+
+        if ($selectedLocationId > 0 && ! $locations->pluck('id')->contains($selectedLocationId)) {
+            abort(403, 'You are not allowed to view that location.');
+        }
+
+        $visibleLocations = $selectedLocationId > 0
+            ? $locations->where('id', $selectedLocationId)->values()
+            : $locations->values();
+
+        $visibleLocationIds = $visibleLocations->pluck('id')->all();
+
+        $openPunchesQuery = TimePunch::with(['location', 'kiosk', 'user', 'schedule'])
+            ->whereNull('clock_out_at');
+
+        if ($visibleLocationIds === []) {
+            $openPunchesQuery->whereRaw('1 = 0');
+        } else {
+            $openPunchesQuery->whereIn('location_id', $visibleLocationIds);
+        }
+
+        $openPunches = $openPunchesQuery
+            ->orderBy('location_id')
+            ->orderBy('clock_in_at')
+            ->get();
+
+        [$scheduleSummaries, $scheduleMessages] = $this->buildPunchScheduleContext($openPunches);
+
+        $locationSummaries = $visibleLocations
+            ->map(function (Location $location) use ($openPunches): array {
+                return [
+                    'location' => $location,
+                    'open_count' => $openPunches->where('location_id', $location->id)->count(),
+                ];
+            })
+            ->values();
+
+        $locationGroups = $visibleLocations
+            ->map(function (Location $location) use ($openPunches): array {
+                $locationPunches = $openPunches
+                    ->where('location_id', $location->id)
+                    ->values();
+
+                return [
+                    'location' => $location,
+                    'open_count' => $locationPunches->count(),
+                    'punches' => $locationPunches,
+                ];
+            })
+            ->filter(fn (array $group) => $selectedLocationId > 0 || $group['open_count'] > 0)
+            ->values();
+
+        $selectedLocation = $selectedLocationId > 0
+            ? $visibleLocations->firstWhere('id', $selectedLocationId)
+            : null;
+
+        return view('punches.current', [
+            'locationGroups' => $locationGroups,
+            'locationSummaries' => $locationSummaries,
+            'locations' => $locations,
+            'selectedLocation' => $selectedLocation,
+            'selectedLocationId' => $selectedLocationId,
+            'scheduleSummaries' => $scheduleSummaries,
+            'scheduleMessages' => $scheduleMessages,
+            'totalOpenPunches' => $openPunches->count(),
+            'activeLocationCount' => $locationSummaries->where('open_count', '>', 0)->count(),
+            'isManagerView' => in_array($user->role, ['admin', 'manager', 'hr'], true),
+            'canViewPunchLog' => $user->canViewPunchLog(),
+            'canViewPunchSummary' => $user->canViewPunchSummary(),
         ]);
     }
 
@@ -312,7 +359,7 @@ class PunchController extends Controller
         ]);
 
         $user = $request->user();
-        abort_unless(in_array($user->role, ['admin', 'manager', 'hr'], true), 403, 'Insufficient role.');
+        abort_unless($user->canViewPunchPhotos(), 403, 'Insufficient role.');
 
         $dateFrom = $data['date_from'] ?? Carbon::now()->startOfMonth()->toDateString();
         $dateTo = $data['date_to'] ?? Carbon::now()->toDateString();
@@ -341,7 +388,7 @@ class PunchController extends Controller
             abort(403, 'You are not allowed to view that staff member.');
         }
 
-        $punches = TimePunch::with(['location', 'kiosk', 'user'])
+        $photoQuery = TimePunch::query()
             ->where(function ($query) {
                 $query->whereNotNull('clock_in_photo_path')
                     ->orWhereNotNull('clock_out_photo_path');
@@ -350,10 +397,20 @@ class PunchController extends Controller
             ->when($selectedLocationId > 0, fn ($query) => $query->where('location_id', $selectedLocationId))
             ->when($selectedUserId > 0, fn ($query) => $query->where('user_id', $selectedUserId))
             ->whereDate('clock_in_at', '>=', $dateFrom)
-            ->whereDate('clock_in_at', '<=', $dateTo)
+            ->whereDate('clock_in_at', '<=', $dateTo);
+
+        $punches = (clone $photoQuery)
+            ->with(['location', 'kiosk', 'user'])
             ->latest('clock_in_at')
             ->paginate(12)
             ->withQueryString();
+
+        $summary = [
+            'total' => (clone $photoQuery)->count(),
+            'clock_in_photos' => (clone $photoQuery)->whereNotNull('clock_in_photo_path')->count(),
+            'clock_out_photos' => (clone $photoQuery)->whereNotNull('clock_out_photo_path')->count(),
+            'staff' => (clone $photoQuery)->distinct('user_id')->count('user_id'),
+        ];
 
         $punches->getCollection()->transform(function (TimePunch $punch) {
             $punch->clock_in_photo_url = $punch->clock_in_photo_path
@@ -374,11 +431,136 @@ class PunchController extends Controller
             'selectedLocationId' => $selectedLocationId,
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
+            'summary' => $summary,
         ]);
     }
 
     private function scheduleSummaryKey(int $userId, string $shiftDate): string
     {
         return $userId . '|' . $shiftDate;
+    }
+
+    private function buildPunchScheduleContext(Collection $punches): array
+    {
+        $scheduleSummaries = [];
+        $scheduleMessages = [];
+
+        $userIds = $punches
+            ->pluck('user_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $shiftDates = $punches
+            ->pluck('clock_in_at')
+            ->filter()
+            ->map(fn ($clockInAt) => $clockInAt->toDateString())
+            ->unique()
+            ->values();
+
+        if ($userIds->isEmpty() || $shiftDates->isEmpty()) {
+            return [$scheduleSummaries, $scheduleMessages];
+        }
+
+        $schedulesByKey = Schedule::query()
+            ->whereIn('user_id', $userIds)
+            ->whereIn('shift_date', $shiftDates)
+            ->where('status', '!=', 'rejected')
+            ->where('change_type', '!=', 'removed_after_approval')
+            ->orderBy('starts_at')
+            ->get(['id', 'user_id', 'shift_date', 'starts_at', 'ends_at', 'status', 'change_type'])
+            ->groupBy(fn (Schedule $schedule) => $this->scheduleSummaryKey($schedule->user_id, $schedule->shift_date->toDateString()));
+
+        $scheduleSummaries = $schedulesByKey
+            ->map(function ($schedules): string {
+                return $schedules
+                    ->map(fn (Schedule $schedule) => $schedule->starts_at->timezone(config('app.timezone'))->format('h:i A') . ' - ' . $schedule->ends_at->timezone(config('app.timezone'))->format('h:i A'))
+                    ->implode(', ');
+            })
+            ->all();
+
+        $scheduleMessages = $punches
+            ->mapWithKeys(function (TimePunch $punch) use ($schedulesByKey): array {
+                $shiftDate = $punch->clock_in_at?->toDateString();
+                if (! $shiftDate) {
+                    return [$punch->id => null];
+                }
+
+                $schedule = $punch->schedule;
+                if (! $schedule || $schedule->status === 'rejected' || $schedule->change_type === 'removed_after_approval') {
+                    $schedule = $this->findBestScheduleForPunch(
+                        $punch,
+                        $schedulesByKey->get($this->scheduleSummaryKey($punch->user_id, $shiftDate), collect()),
+                    );
+                }
+
+                if (! $schedule) {
+                    return [$punch->id => null];
+                }
+
+                $messages = [];
+                if ($punch->clock_in_at && $punch->clock_in_at->lt($schedule->starts_at)) {
+                    $messages[] = 'Clocked in before schedule';
+                } elseif ($punch->clock_in_at && $punch->clock_in_at->gt($schedule->ends_at)) {
+                    $messages[] = 'Clocked in after schedule';
+                }
+
+                if ($punch->clock_out_at && $punch->clock_out_at->lt($schedule->starts_at)) {
+                    $messages[] = 'Clocked out before schedule';
+                } elseif ($punch->clock_out_at && $punch->clock_out_at->gt($schedule->ends_at)) {
+                    $messages[] = 'Clocked out after schedule';
+                }
+
+                return [$punch->id => $messages ? implode(' | ', $messages) : 'Within scheduled range'];
+            })
+            ->all();
+
+        return [$scheduleSummaries, $scheduleMessages];
+    }
+
+    private function findBestScheduleForPunch(TimePunch $punch, Collection $schedules): ?Schedule
+    {
+        if ($schedules->isEmpty()) {
+            return null;
+        }
+
+        $bestSchedule = null;
+        $bestScore = -1;
+        $bestDistance = PHP_INT_MAX;
+
+        foreach ($schedules as $schedule) {
+            $score = 0;
+            $distance = PHP_INT_MAX;
+
+            if ($punch->clock_in_at) {
+                if ($punch->clock_in_at->betweenIncluded($schedule->starts_at, $schedule->ends_at)) {
+                    $score += 4;
+                }
+
+                $distance = min(
+                    abs($punch->clock_in_at->getTimestamp() - $schedule->starts_at->getTimestamp()),
+                    abs($punch->clock_in_at->getTimestamp() - $schedule->ends_at->getTimestamp()),
+                );
+            }
+
+            if ($punch->clock_out_at && $punch->clock_out_at->betweenIncluded($schedule->starts_at, $schedule->ends_at)) {
+                $score += 4;
+            }
+
+            if ($punch->clock_in_at) {
+                $punchEnd = $punch->clock_out_at ?? $punch->clock_in_at;
+                $overlapStart = max($schedule->starts_at->getTimestamp(), $punch->clock_in_at->getTimestamp());
+                $overlapEnd = min($schedule->ends_at->getTimestamp(), $punchEnd->getTimestamp());
+                $score += max(0, $overlapEnd - $overlapStart);
+            }
+
+            if ($score > $bestScore || ($score === $bestScore && $distance < $bestDistance)) {
+                $bestSchedule = $schedule;
+                $bestScore = $score;
+                $bestDistance = $distance;
+            }
+        }
+
+        return $bestSchedule;
     }
 }

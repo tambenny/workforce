@@ -57,11 +57,15 @@ class KioskController extends Controller
             throw ValidationException::withMessages(['pin' => 'Invalid PIN.']);
         }
 
-        $hasOpenPunch = TimePunch::where('user_id', $user->id)
+        $openPunch = TimePunch::with('schedule')
+            ->where('user_id', $user->id)
             ->whereNull('clock_out_at')
-            ->exists();
+            ->first();
+        $hasOpenPunch = (bool) $openPunch;
         $matchedSchedule = $user->requires_schedule_for_clock
-            ? $this->findMatchedSchedule($user->id, $kiosk->location_id, now())
+            ? ($hasOpenPunch
+                ? ($openPunch?->schedule ?? $this->findClockOutScheduleMatch($user->id, $kiosk->location_id, now()))
+                : $this->findClockInScheduleMatch($user->id, $kiosk->location_id, now()))
             : null;
         $clockInBlockReason = (! $hasOpenPunch && $user->requires_schedule_for_clock)
             ? $this->clockInBlockReason($matchedSchedule, now())
@@ -141,7 +145,7 @@ class KioskController extends Controller
             }
 
             $schedule = $user->requires_schedule_for_clock
-                ? $this->findMatchedSchedule($user->id, $kiosk->location_id, $now)
+                ? $this->findClockInScheduleMatch($user->id, $kiosk->location_id, $now)
                 : null;
             if ($user->requires_schedule_for_clock) {
                 $this->assertClockInAllowed($schedule, $now);
@@ -220,7 +224,7 @@ class KioskController extends Controller
             $before = $open->toArray();
             $schedule = $user->requires_schedule_for_clock ? $open->schedule : null;
             if ($user->requires_schedule_for_clock && ! $schedule) {
-                $schedule = $this->findMatchedSchedule($user->id, $kiosk->location_id, $now);
+                $schedule = $this->findClockOutScheduleMatch($user->id, $kiosk->location_id, $now);
             }
             $violation = $user->requires_schedule_for_clock
                 ? $this->buildClockOutViolationNote($schedule, $now, $open->violation_note)
@@ -260,9 +264,53 @@ class KioskController extends Controller
         ]);
     }
 
-    private function findMatchedSchedule(int $userId, int $locationId, Carbon $now): ?Schedule
+    private function findClockInScheduleMatch(int $userId, int $locationId, Carbon $now): ?Schedule
     {
-        $candidates = Schedule::query()
+        $candidates = $this->scheduleCandidates($userId, $locationId, $now);
+
+        $activeSchedule = $candidates
+            ->filter(fn (Schedule $candidate): bool => $candidate->starts_at->lte($now) && $candidate->ends_at->gte($now))
+            ->sortByDesc('starts_at')
+            ->first();
+
+        if ($activeSchedule) {
+            return $activeSchedule;
+        }
+
+        return $candidates
+            ->filter(function (Schedule $candidate) use ($now): bool {
+                return $candidate->starts_at->copy()->subMinutes(15)->lte($now)
+                    && $candidate->starts_at->gt($now);
+            })
+            ->sortBy('starts_at')
+            ->first();
+    }
+
+    private function findClockOutScheduleMatch(int $userId, int $locationId, Carbon $now): ?Schedule
+    {
+        $candidates = $this->scheduleCandidates($userId, $locationId, $now);
+
+        $activeSchedule = $candidates
+            ->filter(fn (Schedule $candidate): bool => $candidate->starts_at->lte($now) && $candidate->ends_at->gte($now))
+            ->sortByDesc('starts_at')
+            ->first();
+
+        if ($activeSchedule) {
+            return $activeSchedule;
+        }
+
+        return $candidates
+            ->filter(function (Schedule $candidate) use ($now): bool {
+                return $candidate->ends_at->lt($now)
+                    && $candidate->ends_at->copy()->addHours(4)->gte($now);
+            })
+            ->sortByDesc('ends_at')
+            ->first();
+    }
+
+    private function scheduleCandidates(int $userId, int $locationId, Carbon $now)
+    {
+        return Schedule::query()
             ->where('user_id', $userId)
             ->where('location_id', $locationId)
             ->where('status', 'approved')
@@ -270,16 +318,6 @@ class KioskController extends Controller
             ->whereDate('shift_date', '<=', $now->toDateString())
             ->orderBy('starts_at')
             ->get();
-
-        foreach ($candidates as $candidate) {
-            $windowStart = $candidate->starts_at->copy()->subHours(2);
-            $windowEnd = $candidate->ends_at->copy()->addHours(4);
-            if ($now->between($windowStart, $windowEnd)) {
-                return $candidate;
-            }
-        }
-
-        return null;
     }
 
     private function buildClockInViolationNote(?Schedule $schedule, Carbon $now): ?string

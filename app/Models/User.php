@@ -26,6 +26,15 @@ class User extends Authenticatable
         'role',
         'can_create_schedules',
         'can_approve_schedules',
+        'can_view_schedules',
+        'can_view_schedule_summary',
+        'can_view_current_staff',
+        'can_view_punch_photos',
+        'can_view_security_warnings',
+        'can_view_dashboard',
+        'can_use_web_clock',
+        'can_view_my_punches',
+        'can_view_punch_summary',
         'location_id',
         'position_id',
         'is_active',
@@ -60,6 +69,15 @@ class User extends Authenticatable
             'requires_schedule_for_clock' => 'boolean',
             'can_create_schedules' => 'boolean',
             'can_approve_schedules' => 'boolean',
+            'can_view_schedules' => 'boolean',
+            'can_view_schedule_summary' => 'boolean',
+            'can_view_current_staff' => 'boolean',
+            'can_view_punch_photos' => 'boolean',
+            'can_view_security_warnings' => 'boolean',
+            'can_view_dashboard' => 'boolean',
+            'can_use_web_clock' => 'boolean',
+            'can_view_my_punches' => 'boolean',
+            'can_view_punch_summary' => 'boolean',
         ];
     }
 
@@ -89,7 +107,7 @@ class User extends Authenticatable
             return true;
         }
 
-        if ($this->role !== 'manager') {
+        if (! in_array($this->role, ['manager', 'hr'], true)) {
             return false;
         }
 
@@ -98,5 +116,132 @@ class User extends Authenticatable
             'approve' => (bool) $this->can_approve_schedules,
             default => false,
         };
+    }
+
+    public function canViewSchedules(): bool
+    {
+        if (in_array($this->role, ['admin', 'staff'], true)) {
+            return true;
+        }
+
+        if (! in_array($this->role, ['manager', 'hr'], true)) {
+            return false;
+        }
+
+        return (bool) $this->can_view_schedules
+            || $this->hasSchedulePermission('create')
+            || $this->hasSchedulePermission('approve');
+    }
+
+    public function canViewScheduleSummary(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return in_array($this->role, ['manager', 'hr'], true)
+            && (bool) $this->can_view_schedule_summary;
+    }
+
+    public function canViewScheduleDetails(): bool
+    {
+        return $this->canViewSchedules() || $this->canViewScheduleSummary();
+    }
+
+    public function canViewCurrentStaffReport(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return in_array($this->role, ['manager', 'hr'], true)
+            && (bool) $this->can_view_current_staff;
+    }
+
+    public function canViewPunchPhotos(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return in_array($this->role, ['manager', 'hr'], true)
+            && (bool) $this->can_view_punch_photos;
+    }
+
+    public function canViewSecurityWarnings(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return in_array($this->role, ['manager', 'hr'], true)
+            && (bool) $this->can_view_security_warnings;
+    }
+
+    public function canViewDashboard(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return $this->attributeEnabledByDefault('can_view_dashboard');
+    }
+
+    public function canUseWebClock(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return $this->attributeEnabledByDefault('can_use_web_clock');
+    }
+
+    public function canViewOwnPunches(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return $this->attributeEnabledByDefault('can_view_my_punches');
+    }
+
+    public function canViewPunchSummary(): bool
+    {
+        if ($this->role === 'admin') {
+            return true;
+        }
+
+        return $this->attributeEnabledByDefault('can_view_punch_summary');
+    }
+
+    public function canViewPunchLog(): bool
+    {
+        return $this->canViewOwnPunches() || $this->canViewCurrentStaffReport();
+    }
+
+    public function preferredHomeRouteName(): string
+    {
+        return match (true) {
+            $this->canViewDashboard() => 'dashboard',
+            $this->canUseWebClock() => 'clock.index',
+            $this->canViewPunchLog() => 'punches.index',
+            $this->canViewPunchSummary() => 'punches.summary',
+            $this->canViewSchedules() => 'schedules.index',
+            $this->canViewScheduleSummary() => 'schedules.summary',
+            $this->hasSchedulePermission('create') => 'schedules.create',
+            $this->hasSchedulePermission('approve') => 'schedules.approvals',
+            $this->canViewCurrentStaffReport() => 'punches.current',
+            $this->canViewPunchPhotos() => 'punches.photos',
+            $this->canViewSecurityWarnings() => 'reports.security-warnings',
+            in_array($this->role, ['admin', 'hr'], true) => 'staff.index',
+            default => 'profile.edit',
+        };
+    }
+
+    private function attributeEnabledByDefault(string $attribute): bool
+    {
+        $value = $this->getAttribute($attribute);
+
+        return $value === null ? true : (bool) $value;
     }
 }

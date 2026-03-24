@@ -1,0 +1,16 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-labelledby="boardroomTitle">
+    <title id="boardroomTitle">Workforce Clock Boardroom Logo</title>
+    <defs>
+        <linearGradient id="boardroomBg" x1="18" y1="18" x2="142" y2="142" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#0f172a"/>
+            <stop offset="1" stop-color="#1e293b"/>
+        </linearGradient>
+    </defs>
+    <rect x="12" y="12" width="136" height="136" rx="26" fill="url(#boardroomBg)"/>
+    <path d="M34 108L48 58L66 104L80 76L94 104L112 58L126 108" stroke="#f8fafc" stroke-linecap="round" stroke-linejoin="round" stroke-width="9"/>
+    <circle cx="118" cy="44" r="20" fill="#f8fafc"/>
+    <circle cx="118" cy="44" r="16" stroke="#f97316" stroke-width="4"/>
+    <path d="M118 34V45H127" stroke="#1d4ed8" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <circle cx="118" cy="44" r="3.5" fill="#1d4ed8"/>
+    <path d="M34 122H126" stroke="#ffffff" stroke-linecap="round" stroke-opacity="0.16" stroke-width="4"/>
+</svg>

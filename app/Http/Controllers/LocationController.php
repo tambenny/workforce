@@ -16,19 +16,27 @@ class LocationController extends Controller
     {
         $search = trim((string) $request->query('q', ''));
 
-        $locations = Location::query()
-            ->withCount(['users', 'kiosks', 'schedules'])
+        $locationQuery = Location::query()
             ->when($search !== '', function ($query) use ($search): void {
                 $query->where(function ($inner) use ($search): void {
                     $inner->where('name', 'like', '%' . $search . '%')
                         ->orWhere('allowed_ip', 'like', '%' . $search . '%');
                 });
-            })
+            });
+
+        $locations = (clone $locationQuery)
+            ->withCount(['users', 'kiosks'])
             ->orderBy('name')
             ->paginate(20)
             ->withQueryString();
 
-        return view('locations.index', compact('locations', 'search'));
+        $summary = [
+            'total' => (clone $locationQuery)->count(),
+            'active' => (clone $locationQuery)->where('is_active', true)->count(),
+            'with_kiosk' => (clone $locationQuery)->has('kiosks')->count(),
+        ];
+
+        return view('locations.index', compact('locations', 'search', 'summary'));
     }
 
     public function create(): View

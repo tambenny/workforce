@@ -1,0 +1,20 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-labelledby="shiftTitle">
+    <title id="shiftTitle">Workforce Clock Shift Logo</title>
+    <defs>
+        <linearGradient id="shiftBg" x1="18" y1="20" x2="140" y2="138" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#111827"/>
+            <stop offset="1" stop-color="#334155"/>
+        </linearGradient>
+        <linearGradient id="shiftAccent" x1="40" y1="48" x2="120" y2="112" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#22c55e"/>
+            <stop offset="1" stop-color="#06b6d4"/>
+        </linearGradient>
+    </defs>
+    <rect x="12" y="12" width="136" height="136" rx="28" fill="url(#shiftBg)"/>
+    <rect x="30" y="34" width="100" height="92" rx="20" fill="#f8fafc"/>
+    <path d="M48 105L60 62L74 94L88 73L101 94L114 62L126 105" stroke="url(#shiftAccent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+    <circle cx="106" cy="58" r="18" fill="#ecfeff" stroke="#0891b2" stroke-width="4"/>
+    <path d="M106 48V59L115 64" stroke="#0f172a" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <path d="M44 44H70" stroke="#94a3b8" stroke-linecap="round" stroke-width="6"/>
+    <path d="M44 56H62" stroke="#cbd5e1" stroke-linecap="round" stroke-width="5"/>
+</svg>

@@ -30,6 +30,25 @@ class AuthenticationTest extends TestCase
         $response->assertRedirect(route('dashboard', absolute: false));
     }
 
+    public function test_users_are_redirected_to_the_first_allowed_page_after_login(): void
+    {
+        $user = User::factory()->create([
+            'role' => 'staff',
+            'can_view_dashboard' => false,
+            'can_use_web_clock' => true,
+            'can_view_my_punches' => false,
+            'can_view_punch_summary' => false,
+        ]);
+
+        $response = $this->post('/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $this->assertAuthenticated();
+        $response->assertRedirect(route('clock.index', absolute: false));
+    }
+
     public function test_users_can_not_authenticate_with_invalid_password(): void
     {
         $user = User::factory()->create();

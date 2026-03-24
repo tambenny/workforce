@@ -8,6 +8,13 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
+        $driver = DB::getDriverName();
+        $submittedAtExpression = match ($driver) {
+            'sqlite' => "strftime('%Y-%m-%d %H:%M:%S', created_at)",
+            'mysql', 'mariadb' => "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')",
+            default => 'created_at',
+        };
+
         Schema::table('schedules', function (Blueprint $table) {
             $table->foreignId('schedule_form_id')->nullable()->after('id')
                 ->constrained('schedule_forms')->cascadeOnUpdate()->restrictOnDelete();
@@ -18,13 +25,13 @@ return new class extends Migration {
                 location_id,
                 shift_date,
                 created_by,
-                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') as submitted_at
+                {$submittedAtExpression} as submitted_at
             ")
             ->groupBy(
                 'location_id',
                 'shift_date',
                 'created_by',
-                DB::raw("DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')")
+                DB::raw($submittedAtExpression)
             )
             ->get();
 
@@ -42,7 +49,7 @@ return new class extends Migration {
                 ->where('location_id', $group->location_id)
                 ->whereDate('shift_date', $group->shift_date)
                 ->where('created_by', $group->created_by)
-                ->whereRaw("DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') = ?", [$group->submitted_at])
+                ->whereRaw("{$submittedAtExpression} = ?", [$group->submitted_at])
                 ->update([
                     'schedule_form_id' => $formId,
                 ]);

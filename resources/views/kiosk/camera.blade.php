@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Kiosk Clock With Camera</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <style>
@@ -262,6 +265,7 @@
                             </div>
                         </div>
                     </div>
+
                 </section>
             </div>
         </section>
@@ -319,6 +323,10 @@ let blinkOpenFrameCount = 0;
 let stableFaceFrameCount = 0;
 let allowConfirmWithoutPhoto = false;
 let blinkToastTimer = null;
+let lastCameraErrorMessage = '';
+let lastFaceValidationErrorMessage = '';
+let cameraWarmupToken = 0;
+let resetUiTimer = null;
 
 function armInputsAgainstAutofill() {
     staffIdInput.readOnly = true;
@@ -415,11 +423,14 @@ function hideManualControls() {
     manualControlsHint.classList.add('invisible', 'opacity-0');
 }
 
-function enableConfirmWithoutPhoto(message = 'Camera is unavailable. You can continue without a photo for this punch.') {
+function enableConfirmWithoutPhoto(message = 'Camera is unavailable. You can continue without a photo for this punch.', options = {}) {
     allowConfirmWithoutPhoto = true;
-    showManualControls('Manual camera controls are available, or you can continue without a photo.');
+    showManualControls(options.manualMessage || 'Manual camera controls are available, or you can continue without a photo.');
     cameraHintEl.textContent = message;
-    setVerificationSummary('No live camera photo was captured. This punch can continue without live-face verification.', 'warning');
+    setVerificationSummary(
+        options.summary || 'No live camera photo was captured. This punch can continue without live-face verification.',
+        options.summaryTone || 'warning'
+    );
     setConfirmAvailability();
 }
 
@@ -455,6 +466,23 @@ function resetSnapshot() {
     setConfirmAvailability();
 }
 
+function cameraStreamIsLive(stream = cameraStream) {
+    return Boolean(stream?.getVideoTracks?.().some((track) => track.readyState === 'live'));
+}
+
+function cameraPreviewHasRenderableFrame() {
+    return cameraPreview.srcObject === cameraStream
+        && cameraStreamIsLive()
+        && cameraPreview.readyState >= 2
+        && !cameraPreview.paused
+        && !cameraPreview.ended
+        && Boolean(cameraPreview.videoWidth && cameraPreview.videoHeight);
+}
+
+function cameraPreviewIsHealthy() {
+    return cameraPreviewHasRenderableFrame();
+}
+
 function stopCamera() {
     if (cameraStream) {
         cameraStream.getTracks().forEach((track) => track.stop());
@@ -462,7 +490,10 @@ function stopCamera() {
 
     cameraStream = null;
     cameraReadyPromise = null;
+    cameraPreview.pause();
     cameraPreview.srcObject = null;
+    cameraPreview.removeAttribute('src');
+    cameraPreview.load();
 }
 
 function stopFaceValidation() {
@@ -483,16 +514,45 @@ function resetConfirmButton() {
     confirmBtn.disabled = false;
 }
 
+function clearPendingUiReset() {
+    if (!resetUiTimer) {
+        return;
+    }
+
+    window.clearTimeout(resetUiTimer);
+    resetUiTimer = null;
+}
+
+function scheduleUiReset(delayMs = 2500) {
+    clearPendingUiReset();
+    resetUiTimer = window.setTimeout(() => {
+        resetUiTimer = null;
+        resetUI();
+    }, delayMs);
+}
+
 function clearReadyState() {
+    clearPendingUiReset();
+    cameraWarmupToken += 1;
     nextAction = null;
     stopFaceValidation();
+    stopCamera();
     resetSnapshot();
     resetConfirmButton();
+    identifyBtn.disabled = false;
+    confirmBtn.disabled = false;
+    captureBtn.disabled = false;
+    startCameraBtn.disabled = false;
+    uploadPhotoBtn.disabled = false;
     hintEl.textContent = '';
+    cameraHintEl.textContent = 'After Identify succeeds, the camera starts automatically. Clock In/Out will capture the photo for the punch.';
+    hideManualControls();
     hideBlinkToast();
 }
 
 function resetUI() {
+    clearPendingUiReset();
+    cameraWarmupToken += 1;
     stopFaceValidation();
     stopCamera();
     staffIdInput.value = '';
@@ -510,6 +570,8 @@ function resetUI() {
     resetSnapshot();
     hideManualControls();
     hideBlinkToast();
+    lastCameraErrorMessage = '';
+    lastFaceValidationErrorMessage = '';
     cameraHintEl.textContent = 'After Identify succeeds, the camera starts automatically. Clock In/Out will capture the photo for the punch.';
     setStatus('');
     setActiveField(activeField);
@@ -552,8 +614,199 @@ function isSecureCameraContext() {
     return window.isSecureContext || ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 }
 
+function describeCameraError(error) {
+    const name = error?.name || 'UnknownError';
+
+    switch (name) {
+        case 'NotAllowedError':
+        case 'PermissionDeniedError':
+            return 'Browser camera permission was denied. Allow camera access for this site and retry.';
+        case 'NotFoundError':
+        case 'DevicesNotFoundError':
+            return 'No camera was detected on this device.';
+        case 'NotReadableError':
+        case 'TrackStartError':
+            return 'The camera is already in use by another app or browser tab.';
+        case 'OverconstrainedError':
+        case 'ConstraintNotSatisfiedError':
+            return 'The preferred camera settings are not supported on this device.';
+        case 'SecurityError':
+            return 'The browser blocked camera access because the page is not in a trusted secure context.';
+        case 'AbortError':
+            return error?.message || 'Camera startup was interrupted before the device became ready.';
+        case 'TimeoutError':
+            return error?.message || 'The browser did not finish opening the camera in time.';
+        default:
+            return 'The browser could not start the camera.';
+    }
+}
+
+function describeFaceValidationError(error) {
+    const rawMessage = String(error?.message || error || '').trim();
+
+    if (rawMessage.includes('Failed to fetch dynamically imported module')) {
+        return 'Live-face verification could not download its browser library.';
+    }
+
+    if (rawMessage.includes('ERR_BLOCKED_BY_CLIENT')) {
+        return 'A browser extension blocked the live-face verification library.';
+    }
+
+    if (rawMessage.includes('ERR_CERT') || rawMessage.includes('ERR_SSL')) {
+        return 'A certificate error blocked the live-face verification library.';
+    }
+
+    if (rawMessage.includes('storage.googleapis.com')) {
+        return 'The face-verification model could not be downloaded.';
+    }
+
+    if (error?.name === 'TimeoutError') {
+        return rawMessage || 'Live-face verification did not finish loading in time.';
+    }
+
+    return rawMessage !== '' ? `Live-face verification failed: ${rawMessage}` : 'Live-face verification could not start.';
+}
+
+function createNamedError(name, message) {
+    const error = new Error(message);
+    error.name = name;
+
+    return error;
+}
+
+async function withTimeout(promise, timeoutMs, timeoutError) {
+    let timedOut = false;
+
+    const guardedPromise = Promise.resolve(promise).then((value) => {
+        if (timedOut && value?.getTracks) {
+            value.getTracks().forEach((track) => track.stop());
+        }
+
+        return value;
+    });
+
+    return Promise.race([
+        guardedPromise,
+        wait(timeoutMs).then(() => {
+            timedOut = true;
+            throw timeoutError;
+        }),
+    ]);
+}
+
+async function requestCameraStream() {
+    const attempts = [
+        {
+            video: {
+                facingMode: { ideal: 'user' },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+            },
+            audio: false,
+        },
+        {
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+            },
+            audio: false,
+        },
+        {
+            video: true,
+            audio: false,
+        },
+    ];
+
+    let lastError = null;
+
+    for (const constraints of attempts) {
+        try {
+            return await withTimeout(
+                navigator.mediaDevices.getUserMedia(constraints),
+                8000,
+                createNamedError('TimeoutError', 'The browser did not finish opening the camera.')
+            );
+        } catch (error) {
+            lastError = error;
+
+            if (['NotAllowedError', 'PermissionDeniedError', 'NotReadableError', 'TrackStartError', 'SecurityError'].includes(error?.name)) {
+                break;
+            }
+        }
+    }
+
+    throw lastError;
+}
+
+function wait(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function beginCameraWarmup() {
+    const token = ++cameraWarmupToken;
+
+    if (cameraPreviewIsHealthy()) {
+        return Promise.resolve(true);
+    }
+
+    if (!isSecureCameraContext() || !navigator.mediaDevices?.getUserMedia) {
+        return Promise.resolve(false);
+    }
+
+    return ensureCamera(token);
+}
+
+async function attachCameraPreview(stream) {
+    cameraReadyPromise = null;
+    cameraPreview.pause();
+    cameraPreview.srcObject = null;
+    cameraPreview.removeAttribute('src');
+    cameraPreview.load();
+    await wait(80);
+    cameraPreview.srcObject = stream;
+    const previewStarted = await startCameraPreview();
+    if (!previewStarted) {
+        throw createNamedError('AbortError', 'The browser granted camera access, but the live preview did not start.');
+    }
+
+    return true;
+}
+
+async function startCameraPreview() {
+    cameraPreview.autoplay = true;
+    cameraPreview.muted = true;
+    cameraPreview.playsInline = true;
+    cameraPreview.setAttribute('autoplay', 'autoplay');
+    cameraPreview.setAttribute('muted', 'muted');
+    cameraPreview.setAttribute('playsinline', 'playsinline');
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            await withTimeout(
+                cameraPreview.play(),
+                3500,
+                createNamedError('TimeoutError', 'The browser did not start the live preview.')
+            );
+        } catch (error) {
+            if (attempt === 2) {
+                throw error;
+            }
+        }
+
+        const ready = await waitForVideoReady();
+        const freshFrame = ready ? await waitForFreshPreviewFrame() : false;
+        if (ready && freshFrame && cameraPreview.videoWidth && cameraPreview.videoHeight && !cameraPreview.paused) {
+            return true;
+        }
+
+        await wait(250 * (attempt + 1));
+    }
+
+    return false;
+}
+
 function waitForVideoReady() {
-    if (cameraPreview.videoWidth && cameraPreview.videoHeight) {
+    if (cameraPreviewHasRenderableFrame()) {
         return Promise.resolve(true);
     }
 
@@ -567,18 +820,51 @@ function waitForVideoReady() {
                 settled = true;
                 cameraPreview.removeEventListener('loadedmetadata', onReady);
                 cameraPreview.removeEventListener('canplay', onReady);
+                cameraPreview.removeEventListener('playing', onReady);
                 resolve(result);
             };
-            const onReady = () => finish(true);
+            const onReady = () => finish(cameraPreviewHasRenderableFrame());
             cameraPreview.addEventListener('loadedmetadata', onReady, { once: true });
             cameraPreview.addEventListener('canplay', onReady, { once: true });
-            window.setTimeout(() => finish(Boolean(cameraPreview.videoWidth && cameraPreview.videoHeight)), 3000);
+            cameraPreview.addEventListener('playing', onReady, { once: true });
+            window.setTimeout(() => finish(cameraPreviewHasRenderableFrame()), 3000);
         }).finally(() => {
             cameraReadyPromise = null;
         });
     }
 
     return cameraReadyPromise;
+}
+
+function waitForFreshPreviewFrame(timeoutMs = 2500) {
+    const initialTime = Number.isFinite(cameraPreview.currentTime) ? cameraPreview.currentTime : 0;
+    const startedAt = performance.now();
+
+    return new Promise((resolve) => {
+        const check = () => {
+            if (cameraPreview.srcObject !== cameraStream || !cameraStreamIsLive()) {
+                resolve(false);
+                return;
+            }
+
+            const hasFreshFrame = Number.isFinite(cameraPreview.currentTime)
+                && cameraPreview.currentTime > initialTime + 0.01;
+
+            if (cameraPreviewHasRenderableFrame() && hasFreshFrame) {
+                resolve(true);
+                return;
+            }
+
+            if (performance.now() - startedAt >= timeoutMs) {
+                resolve(false);
+                return;
+            }
+
+            window.setTimeout(check, 100);
+        };
+
+        check();
+    });
 }
 
 function updateSnapshot(dataUrl) {
@@ -603,7 +889,7 @@ async function ensureFaceLandmarker() {
     }
 
     if (!faceLandmarkerPromise) {
-        faceLandmarkerPromise = (async () => {
+        faceLandmarkerPromise = withTimeout((async () => {
             const visionModule = await import(faceLandmarkerBundleUrl);
             const vision = await visionModule.FilesetResolver.forVisionTasks(faceLandmarkerWasmRoot);
 
@@ -618,15 +904,20 @@ async function ensureFaceLandmarker() {
                 minTrackingConfidence: 0.6,
                 outputFaceBlendshapes: true,
             });
-        })()
+        })(), 12000, createNamedError('TimeoutError', 'Live-face verification did not finish loading.'))
             .then((instance) => {
                 faceLandmarker = instance;
+                lastFaceValidationErrorMessage = '';
                 return true;
             })
             .catch((error) => {
                 console.error('Face validation failed to load.', error);
-                enableConfirmWithoutPhoto('Automatic face verification is unavailable. You can continue without a photo or use manual camera controls.');
-                setStatus('Face validation could not load. You can continue without a photo or use Upload Photo.', 'text-amber-700');
+                lastFaceValidationErrorMessage = describeFaceValidationError(error);
+                enableConfirmWithoutPhoto('Automatic face verification is unavailable. You can continue without a photo or use manual camera controls.', {
+                    manualMessage: 'Manual camera controls are available because live-face verification could not load.',
+                    summary: 'Webcam can still be used without live-face verification. Capture manually or continue without a photo.',
+                });
+                setStatus(`${lastFaceValidationErrorMessage} You can continue without a photo or use Upload Photo.`, 'text-amber-700');
                 return false;
             })
             .finally(() => {
@@ -841,39 +1132,78 @@ async function startFaceValidation() {
     return true;
 }
 
-async function ensureCamera() {
-    if (cameraStream) {
-        return true;
+async function ensureCamera(expectedWarmupToken = null, options = {}) {
+    const { forceRestart = false } = options;
+
+    if (forceRestart) {
+        stopCamera();
     }
+
+    if (cameraStream && cameraStreamIsLive()) {
+        try {
+            if (!cameraPreviewIsHealthy()) {
+                await attachCameraPreview(cameraStream);
+            }
+
+            lastCameraErrorMessage = '';
+            disableConfirmWithoutPhoto();
+            cameraHintEl.textContent = 'Camera ready. Clock In/Out will capture the photo automatically. Use Retake Photo only if needed.';
+            return true;
+        } catch (error) {
+            console.warn('Existing camera stream could not resume. Requesting a new stream.', error);
+            stopCamera();
+        }
+    } else if (cameraStream) {
+        stopCamera();
+    }
+
     if (!isSecureCameraContext()) {
+        lastCameraErrorMessage = 'Live camera needs HTTPS or localhost.';
         enableConfirmWithoutPhoto('Live camera needs HTTPS or localhost. You can continue without a photo or use manual camera controls.');
         return false;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
+        lastCameraErrorMessage = 'This browser does not support live camera access.';
         enableConfirmWithoutPhoto('This browser does not support live camera access. You can continue without a photo or use manual camera controls.');
         return false;
     }
 
-    try {
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: 'user',
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-            },
-            audio: false,
-        });
-        cameraPreview.srcObject = cameraStream;
-        await cameraPreview.play().catch(() => {});
-        await waitForVideoReady();
-        disableConfirmWithoutPhoto();
-        cameraHintEl.textContent = 'Camera ready. Clock In/Out will capture the photo automatically. Use Retake Photo only if needed.';
-        return true;
-    } catch (error) {
-        enableConfirmWithoutPhoto('Camera unavailable. You can continue without a photo or allow camera access and use manual controls.');
-        setStatus('Live camera could not start. You can continue without a photo.', 'text-amber-700');
-        return false;
+    let startupError = null;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            cameraStream = await requestCameraStream();
+            if (expectedWarmupToken !== null && expectedWarmupToken !== cameraWarmupToken) {
+                stopCamera();
+                return false;
+            }
+
+            await attachCameraPreview(cameraStream);
+            if (expectedWarmupToken !== null && expectedWarmupToken !== cameraWarmupToken) {
+                stopCamera();
+                return false;
+            }
+
+            lastCameraErrorMessage = '';
+            disableConfirmWithoutPhoto();
+            cameraHintEl.textContent = 'Camera ready. Clock In/Out will capture the photo automatically. Use Retake Photo only if needed.';
+            return true;
+        } catch (error) {
+            startupError = error;
+            console.warn(`Live camera start attempt ${attempt + 1} failed.`, error);
+            stopCamera();
+
+            if (attempt === 0) {
+                await wait(300);
+            }
+        }
     }
+
+    const errorMessage = describeCameraError(startupError);
+    lastCameraErrorMessage = errorMessage;
+    enableConfirmWithoutPhoto('Camera unavailable. You can continue without a photo or allow camera access and use manual controls.');
+    setStatus(`${errorMessage} You can continue without a photo.`, 'text-amber-700');
+    return false;
 }
 
 async function captureSnapshot(loadingLabel = 'Capturing...') {
@@ -930,6 +1260,11 @@ setInterval(currentTime, 1000);
 currentTime();
 resetUI();
 window.addEventListener('pageshow', resetUI);
+window.addEventListener('pagehide', () => {
+    cameraWarmupToken += 1;
+    stopFaceValidation();
+    stopCamera();
+});
 staffIdInput.addEventListener('click', () => setActiveField('staff_id'));
 staffIdInput.addEventListener('pointerdown', () => unlockInput(staffIdInput));
 staffIdInput.addEventListener('focus', () => setActiveField('staff_id'));
@@ -993,7 +1328,7 @@ startCameraBtn.addEventListener('click', async () => {
     showManualControls('Manual camera controls are available while you recover the automatic flow.');
     startCameraBtn.disabled = true;
     startCameraBtn.textContent = 'Starting...';
-    const started = await ensureCamera();
+    const started = await ensureCamera(null, { forceRestart: true });
     if (started && nextAction) {
         await startFaceValidation();
     }
@@ -1055,6 +1390,8 @@ identifyBtn.addEventListener('click', async () => {
         return setStatus('Enter PIN.', 'text-red-600');
     }
 
+    const prewarmCameraPromise = beginCameraWarmup();
+
     const res = await fetch('{{ route('kiosk.identify') }}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf },
@@ -1063,6 +1400,8 @@ identifyBtn.addEventListener('click', async () => {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+        cameraWarmupToken += 1;
+        stopCamera();
         return setStatus(extractErrorMessage(data, 'Staff ID / PIN not recognized.'), 'text-red-600');
     }
 
@@ -1070,6 +1409,8 @@ identifyBtn.addEventListener('click', async () => {
     const clockInAllowed = data.clock_in_allowed !== false;
 
     if (nextAction === 'clock-in' && !clockInAllowed) {
+        cameraWarmupToken += 1;
+        stopCamera();
         resetConfirmButton();
         setStatus(data.clock_in_block_reason || 'Clock in is not allowed yet.', 'text-red-600');
         hintEl.textContent = data.schedule_hint || '';
@@ -1093,14 +1434,31 @@ identifyBtn.addEventListener('click', async () => {
     hintEl.textContent = data.schedule_hint || '';
     setVerificationSummary(`Staff identified as ${data.name}. Starting live-face verification.`, 'info');
 
-    const cameraStarted = await ensureCamera();
-    if (cameraStarted && await startFaceValidation()) {
+    const warmedCamera = await prewarmCameraPromise;
+    const cameraStarted = warmedCamera || await ensureCamera();
+    const faceValidationStarted = cameraStarted ? await startFaceValidation() : false;
+    if (cameraStarted && faceValidationStarted) {
         setStatus(`Ready: ${data.name}. Blink once, then press ${nextAction === 'clock-in' ? 'CLOCK IN' : 'CLOCK OUT'}.`, 'text-slate-700');
         return;
     }
 
+    if (cameraStarted) {
+        enableConfirmWithoutPhoto(
+            `Webcam ready, but live-face verification could not start. You can use Retake Photo or continue without a photo before ${nextAction === 'clock-in' ? 'clocking in' : 'clocking out'}.`,
+            {
+                manualMessage: 'Webcam is ready. Use Retake Photo to capture manually, or continue without a photo.',
+                summary: 'Webcam started, but live-face verification is unavailable. You can still capture a manual photo for this punch.',
+            }
+        );
+        setStatus(
+            `Ready: ${data.name}. Webcam started, but live-face verification could not start. ${lastFaceValidationErrorMessage || 'Use Retake Photo or continue without a photo.'}`,
+            'text-amber-700'
+        );
+        return;
+    }
+
     enableConfirmWithoutPhoto(`Camera or face verification could not start. You can continue without a photo, or use manual camera controls before ${nextAction === 'clock-in' ? 'clocking in' : 'clocking out'}.`);
-    setStatus(`Ready: ${data.name}. Camera or face verification could not start. You can continue without a photo.`, 'text-amber-700');
+    setStatus(`Ready: ${data.name}. ${lastCameraErrorMessage || 'Camera or face verification could not start.'} You can continue without a photo.`, 'text-amber-700');
 });
 
 function handleEnter(event) {
@@ -1161,7 +1519,7 @@ confirmBtn.addEventListener('click', async () => {
     if (!usePhotoRoute) {
         setVerificationSummary('Punch submitted without a camera photo. No live-face verification was saved for this record.', 'warning');
     }
-    setTimeout(resetUI, 2500);
+    scheduleUiReset();
 });
 </script>
 </body>

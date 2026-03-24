@@ -16,24 +16,59 @@ class ClockController extends Controller
     public function index(Request $request): View
     {
         $user = $request->user()->loadMissing('location');
-        $openPunch = TimePunch::where('user_id', $user->id)->whereNull('clock_out_at')->first();
+        abort_unless($user->canUseWebClock(), 403, 'Insufficient role.');
+
+        $openPunch = TimePunch::with('schedule')->where('user_id', $user->id)->whereNull('clock_out_at')->first();
         $todaySchedule = null;
         if ($user->requires_schedule_for_clock) {
             $todaySchedule = Schedule::query()
                 ->where('user_id', $user->id)
                 ->where('status', 'approved')
                 ->where('starts_at', '<=', now())
-                ->where('ends_at', '>=', now()->subDay())
-                ->latest('starts_at')
+                ->where('ends_at', '>=', now())
+                ->orderByDesc('starts_at')
                 ->first();
         }
 
-        return view('clock.index', compact('user', 'openPunch', 'todaySchedule'));
+        $currentIp = (string) $request->ip();
+        $allowedIp = $user->location?->allowed_ip;
+        $isNetworkRestricted = filled($allowedIp);
+        $isCurrentIpAllowed = ! $isNetworkRestricted || $currentIp === $allowedIp;
+
+        $clockInBlockReason = null;
+        if ($openPunch) {
+            $clockInBlockReason = 'You already have an open punch.';
+        } elseif ($user->requires_schedule_for_clock && ! $todaySchedule) {
+            $clockInBlockReason = 'No active approved schedule for this time window.';
+        } elseif (! $isCurrentIpAllowed) {
+            $clockInBlockReason = 'Clock in must be performed from store machine network.';
+        }
+
+        $clockOutBlockReason = null;
+        if (! $openPunch) {
+            $clockOutBlockReason = 'No open punch found.';
+        } elseif (! $isCurrentIpAllowed) {
+            $clockOutBlockReason = 'Clock out must be performed from store machine network.';
+        }
+
+        return view('clock.index', compact(
+            'user',
+            'openPunch',
+            'todaySchedule',
+            'currentIp',
+            'allowedIp',
+            'isNetworkRestricted',
+            'isCurrentIpAllowed',
+            'clockInBlockReason',
+            'clockOutBlockReason',
+        ));
     }
 
     public function clockIn(Request $request): RedirectResponse
     {
         $user = $request->user()->loadMissing('location');
+        abort_unless($user->canUseWebClock(), 403, 'Insufficient role.');
+
         $ip = (string) $request->ip();
 
         $schedule = null;
@@ -43,6 +78,7 @@ class ClockController extends Controller
                 ->where('status', 'approved')
                 ->where('starts_at', '<=', now())
                 ->where('ends_at', '>=', now())
+                ->orderByDesc('starts_at')
                 ->first();
 
             if (! $schedule) {
@@ -101,6 +137,8 @@ class ClockController extends Controller
     public function clockOut(Request $request): RedirectResponse
     {
         $user = $request->user()->loadMissing('location');
+        abort_unless($user->canUseWebClock(), 403, 'Insufficient role.');
+
         $ip = (string) $request->ip();
 
         try {

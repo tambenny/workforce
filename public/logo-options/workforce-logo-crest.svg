@@ -1,0 +1,16 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-labelledby="crestTitle">
+    <title id="crestTitle">Workforce Clock Crest Logo</title>
+    <defs>
+        <linearGradient id="crestShield" x1="28" y1="18" x2="132" y2="142" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#1e3a8a"/>
+            <stop offset="1" stop-color="#0f172a"/>
+        </linearGradient>
+    </defs>
+    <path d="M80 12L128 28V70C128 100 108 125 80 140C52 125 32 100 32 70V28L80 12Z" fill="url(#crestShield)"/>
+    <path d="M80 22L120 35V70C120 95 103 115 80 129C57 115 40 95 40 70V35L80 22Z" stroke="#e2e8f0" stroke-width="4"/>
+    <circle cx="80" cy="57" r="18" fill="#f8fafc"/>
+    <circle cx="80" cy="57" r="14" stroke="#f97316" stroke-width="4"/>
+    <path d="M80 48V58H88" stroke="#1d4ed8" stroke-linecap="round" stroke-linejoin="round" stroke-width="4.5"/>
+    <circle cx="80" cy="57" r="3.5" fill="#1d4ed8"/>
+    <path d="M52 94L61 66L73 90L80 76L87 90L99 66L108 94" stroke="#f8fafc" stroke-linecap="round" stroke-linejoin="round" stroke-width="7"/>
+</svg>

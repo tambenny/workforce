@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Workforce Clock Logo Options</title>
+    <style>
+        :root {
+            --bg: linear-gradient(180deg, #e2e8f0 0%, #f8fafc 45%, #dbeafe 100%);
+            --card: rgba(255, 255, 255, 0.88);
+            --ink: #0f172a;
+            --muted: #64748b;
+            --border: rgba(148, 163, 184, 0.28);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--ink);
+        }
+
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 24px 56px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(2rem, 4vw, 3rem);
+            line-height: 1;
+        }
+
+        .intro {
+            max-width: 720px;
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 1rem;
+            line-height: 1.55;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 22px;
+            margin-top: 32px;
+        }
+
+        .card {
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            background: var(--card);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+            backdrop-filter: blur(10px);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 220px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #eff6ff);
+        }
+
+        .logo img {
+            width: 144px;
+            height: 144px;
+        }
+
+        .name {
+            margin-top: 18px;
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .note {
+            margin-top: 8px;
+            color: var(--muted);
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+
+        .file {
+            display: inline-block;
+            margin-top: 14px;
+            padding: 8px 10px;
+            border-radius: 999px;
+            background: #e2e8f0;
+            color: #334155;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Workforce Clock Logo Options</h1>
+        <p class="intro">
+            Four alternate directions for the clocking system. Each keeps the same theme: workforce motion plus time tracking.
+            Open this page in the browser and pick the one you want to use as the main app mark.
+        </p>
+
+        <section class="grid">
+            <article class="card">
+                <div class="logo">
+                    <img src="../workforce-clock-logo.svg" alt="Current Workforce Clock logo">
+                </div>
+                <div class="name">Current</div>
+                <p class="note">Balanced mark: workforce wave plus clock dial. Safe, clean, product-ready.</p>
+                <span class="file">public/workforce-clock-logo.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-orbit.svg" alt="Orbit logo option">
+                </div>
+                <div class="name">Orbit</div>
+                <p class="note">More dynamic and brand-like. Feels like motion, verification, and time orbiting around the team.</p>
+                <span class="file">public/logo-options/workforce-logo-orbit.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-shift.svg" alt="Shift logo option">
+                </div>
+                <div class="name">Shift</div>
+                <p class="note">A dashboard-card look. Good if you want the product to feel operational and enterprise-focused.</p>
+                <span class="file">public/logo-options/workforce-logo-shift.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-punch.svg" alt="Punch logo option">
+                </div>
+                <div class="name">Punch Card</div>
+                <p class="note">Leans into time clock history. Slightly more literal, but memorable for a clock-in system.</p>
+                <span class="file">public/logo-options/workforce-logo-punch.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-grid.svg" alt="Grid logo option">
+                </div>
+                <div class="name">Grid</div>
+                <p class="note">Best for a multi-location workforce platform. Feels modular, modern, and system-oriented.</p>
+                <span class="file">public/logo-options/workforce-logo-grid.svg</span>
+            </article>
+        </section>
+
+        <h1 style="margin-top: 44px;">Formal Directions</h1>
+        <p class="intro">
+            These are tighter and more corporate: simpler geometry, less playful color behavior, and stronger marks for a payroll,
+            workforce, or operations product.
+        </p>
+
+        <section class="grid">
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-boardroom.svg" alt="Boardroom logo option">
+                </div>
+                <div class="name">Boardroom</div>
+                <p class="note">Most balanced for production use. Executive, stable, and still clearly about workforce plus time.</p>
+                <span class="file">public/logo-options/workforce-logo-boardroom.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-precision.svg" alt="Precision logo option">
+                </div>
+                <div class="name">Precision</div>
+                <p class="note">More technical and system-like. Best if you want accuracy and compliance to be the visual message.</p>
+                <span class="file">public/logo-options/workforce-logo-precision.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-crest.svg" alt="Crest logo option">
+                </div>
+                <div class="name">Crest</div>
+                <p class="note">A more official mark. Feels secure and institutional, useful if the product should look authoritative.</p>
+                <span class="file">public/logo-options/workforce-logo-crest.svg</span>
+            </article>
+
+            <article class="card">
+                <div class="logo">
+                    <img src="workforce-logo-ledger.svg" alt="Ledger logo option">
+                </div>
+                <div class="name">Ledger</div>
+                <p class="note">Leans into record-keeping and timesheets. Strong fit for HR, payroll, and attendance workflows.</p>
+                <span class="file">public/logo-options/workforce-logo-ledger.svg</span>
+            </article>
+        </section>
+    </main>
+</body>
+</html>

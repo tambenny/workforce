@@ -1,0 +1,21 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-labelledby="punchTitle">
+    <title id="punchTitle">Workforce Clock Punch Logo</title>
+    <defs>
+        <linearGradient id="punchBg" x1="20" y1="16" x2="138" y2="144" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#172554"/>
+            <stop offset="1" stop-color="#312e81"/>
+        </linearGradient>
+        <linearGradient id="punchCard" x1="42" y1="34" x2="118" y2="122" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#ffffff"/>
+            <stop offset="1" stop-color="#e0f2fe"/>
+        </linearGradient>
+    </defs>
+    <rect x="12" y="12" width="136" height="136" rx="32" fill="url(#punchBg)"/>
+    <rect x="36" y="30" width="88" height="100" rx="18" fill="url(#punchCard)"/>
+    <path d="M54 58H84" stroke="#94a3b8" stroke-linecap="round" stroke-width="6"/>
+    <path d="M54 74H76" stroke="#cbd5e1" stroke-linecap="round" stroke-width="5"/>
+    <path d="M50 106L60 72L72 100L82 84L92 100L104 72L114 106" stroke="#1d4ed8" stroke-linecap="round" stroke-linejoin="round" stroke-width="7"/>
+    <circle cx="103" cy="49" r="16" fill="#fff7ed" stroke="#f97316" stroke-width="4"/>
+    <path d="M103 41V50L110 54" stroke="#ea580c" stroke-linecap="round" stroke-linejoin="round" stroke-width="4.5"/>
+    <rect x="60" y="18" width="40" height="18" rx="9" fill="#38bdf8"/>
+</svg>

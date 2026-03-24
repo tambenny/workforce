@@ -10,11 +10,21 @@ use App\Http\Controllers\PunchController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\SecurityWarningController;
 use App\Http\Controllers\StaffController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+Route::redirect('/', '/login');
+Route::redirect('/public', '/login');
+
+Route::post('/locale', function (Request $request) {
+    $validated = $request->validate([
+        'locale' => ['required', 'string', 'in:'.implode(',', config('app.available_locales', ['en']))],
+    ]);
+
+    $request->session()->put('locale', $validated['locale']);
+
+    return back();
+})->name('locale.update');
 
 Route::middleware('kiosk.auth')->group(function () {
     Route::get('/kiosk', [KioskController::class, 'index'])->name('kiosk.home');
@@ -39,6 +49,7 @@ Route::middleware('kiosk.auth')->group(function () {
 Route::middleware(['auth', 'verified', 'log.ip.mismatch'])->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
     Route::get('/punches', [PunchController::class, 'index'])->name('punches.index');
+    Route::get('/punches/current', [PunchController::class, 'current'])->name('punches.current');
     Route::get('/punches/summary', [PunchController::class, 'summary'])->name('punches.summary');
     Route::get('/punches/photos', [PunchController::class, 'photos'])->name('punches.photos');
     Route::post('/punches/{punch}/force-clock-out', [PunchController::class, 'forceClockOut'])->name('punches.force-clock-out');
@@ -53,11 +64,11 @@ Route::middleware(['auth', 'verified', 'log.ip.mismatch'])->group(function () {
     Route::put('/staff/{staff}', [StaffController::class, 'update'])->middleware('role:admin,hr')->name('staff.update');
     Route::post('/staff/{staff}/reset-pin', [StaffController::class, 'resetPin'])->middleware('role:admin,hr')->name('staff.reset-pin');
 
-    Route::get('/positions', [PositionController::class, 'index'])->middleware('role:admin')->name('positions.index');
-    Route::get('/positions/create', [PositionController::class, 'create'])->middleware('role:admin')->name('positions.create');
-    Route::post('/positions', [PositionController::class, 'store'])->middleware('role:admin')->name('positions.store');
-    Route::get('/positions/{position}/edit', [PositionController::class, 'edit'])->middleware('role:admin')->name('positions.edit');
-    Route::put('/positions/{position}', [PositionController::class, 'update'])->middleware('role:admin')->name('positions.update');
+    Route::get('/positions', [PositionController::class, 'index'])->middleware('role:admin,hr')->name('positions.index');
+    Route::get('/positions/create', [PositionController::class, 'create'])->middleware('role:admin,hr')->name('positions.create');
+    Route::post('/positions', [PositionController::class, 'store'])->middleware('role:admin,hr')->name('positions.store');
+    Route::get('/positions/{position}/edit', [PositionController::class, 'edit'])->middleware('role:admin,hr')->name('positions.edit');
+    Route::put('/positions/{position}', [PositionController::class, 'update'])->middleware('role:admin,hr')->name('positions.update');
 
     Route::get('/locations', [LocationController::class, 'index'])->middleware('role:admin')->name('locations.index');
     Route::get('/locations/create', [LocationController::class, 'create'])->middleware('role:admin')->name('locations.create');
@@ -68,6 +79,8 @@ Route::middleware(['auth', 'verified', 'log.ip.mismatch'])->group(function () {
     Route::post('/locations/{location}/kiosk-token/rotate', [LocationController::class, 'rotateKioskToken'])->middleware('role:admin')->name('locations.kiosk.rotate');
 
     Route::get('/schedules', [ScheduleController::class, 'index'])->name('schedules.index');
+    Route::get('/schedules/timeline', [ScheduleController::class, 'timeline'])->name('schedules.timeline');
+    Route::get('/schedules/summary', [ScheduleController::class, 'summary'])->name('schedules.summary');
     Route::get('/schedules/form', [ScheduleController::class, 'form'])->name('schedules.form');
     Route::post('/schedules/form/reopen', [ScheduleController::class, 'reopenFormForModification'])->middleware('schedule.permission:create')->name('schedules.form.reopen');
     Route::post('/schedules/form/cancel-editing', [ScheduleController::class, 'cancelFormEditing'])->middleware('schedule.permission:create')->name('schedules.form.cancel-editing');
@@ -83,8 +96,8 @@ Route::middleware(['auth', 'verified', 'log.ip.mismatch'])->group(function () {
     Route::post('/schedules/{schedule}/approve', [ScheduleController::class, 'approve'])->middleware('schedule.permission:approve')->name('schedules.approve');
     Route::post('/schedules/{schedule}/reject', [ScheduleController::class, 'reject'])->middleware('schedule.permission:approve')->name('schedules.reject');
 
-    Route::get('/reports/security-warnings', [SecurityWarningController::class, 'index'])->middleware('role:admin,manager')->name('reports.security-warnings');
-    Route::post('/reports/security-warnings/{warning}/resolve', [SecurityWarningController::class, 'resolve'])->middleware('role:admin,manager')->name('reports.security-warnings.resolve');
+    Route::get('/reports/security-warnings', [SecurityWarningController::class, 'index'])->middleware('role:admin,manager,hr')->name('reports.security-warnings');
+    Route::post('/reports/security-warnings/{warning}/resolve', [SecurityWarningController::class, 'resolve'])->middleware('role:admin,manager,hr')->name('reports.security-warnings.resolve');
 });
 
 Route::middleware('auth')->group(function () {
